@@ -14,7 +14,9 @@ class NewsScraper:
         all_news = []
         for url in self.rss_urls:
             try:
+                logger.info(f"Checking RSS source: {url}")
                 feed = feedparser.parse(url)
+                logger.info(f"Found {len(feed.entries)} entries in {url}")
                 for entry in feed.entries:
                     news_item = {
                         "title": entry.get("title", ""),
@@ -23,13 +25,21 @@ class NewsScraper:
                         "source_url": entry.get("link", ""),
                         "image_url": self._extract_image(entry)
                     }
-                    # If original_text is too short, try to fetch full content (optional/basic)
+                    if not news_item["title"] or not news_item["source_url"]:
+                        continue
+                        
+                    # If original_text is too short, try to fetch full content
                     if len(news_item["original_text"]) < 200:
-                        news_item["original_text"] = self._fetch_full_text(news_item["source_url"]) or news_item["original_text"]
+                        logger.info(f"Text too short for '{news_item['title']}', fetching full content...")
+                        full_text = self._fetch_full_text(news_item["source_url"])
+                        if full_text:
+                            news_item["original_text"] = full_text
                     
                     all_news.append(news_item)
             except Exception as e:
                 logger.error(f"Error scraping RSS {url}: {str(e)}")
+        
+        logger.info(f"Total news gathered from all sources: {len(all_news)}")
         return all_news
 
     def _extract_image(self, entry) -> str:
@@ -55,10 +65,13 @@ class NewsScraper:
         except:
             return None
 
-# Example RSS feeds for tourism news (can be expanded)
+# Расширенный список источников: Казахстан + Мировые новости туризма
 TOURISM_RSS_FEEDS = [
-    "https://tengritravel.kz/rss/", # Example Kazakhstani travel news
-    "https://kapital.kz/rss/tourism",
+    "https://tengritravel.kz/rss/",           # Казахстан
+    "https://kapital.kz/rss/tourism",         # Бизнес-туризм КЗ
+    "https://www.travelpulse.com/rss/news",    # Мировые новости (TravelPulse)
+    "https://www.skift.com/feed/",             # Аналитика и новости (Skift)
+    "https://www.travelweekly.com/RSS/Lead-Stories", # Индустрия (Travel Weekly)
 ]
 
 scraper = NewsScraper(TOURISM_RSS_FEEDS)

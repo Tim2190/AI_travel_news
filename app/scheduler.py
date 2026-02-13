@@ -19,6 +19,11 @@ async def process_news_task():
         
         # 1. Scrape new items
         new_items = scraper.scrape()
+        if not new_items:
+            logger.warning("No news found in any RSS sources.")
+            return
+
+        added_count = 0
         for item in new_items:
             # Check if already exists
             exists = db.query(NewsArchive).filter(NewsArchive.source_url == item["source_url"]).first()
@@ -32,34 +37,42 @@ async def process_news_task():
                     status=NewsStatus.draft.value
                 )
                 db.add(news_entry)
+                added_count += 1
+        
         db.commit()
+        logger.info(f"Successfully added {added_count} new unique news items to database.")
 
         # 2. Process drafts (Rewrite and Publish with delay)
         drafts = db.query(NewsArchive).filter(NewsArchive.status == NewsStatus.draft.value).all()
+        logger.info(f"Found {len(drafts)} drafts waiting to be processed.")
+        
         for i, draft in enumerate(drafts):
             try:
                 # If it's not the first news in this batch, wait before processing
                 if i > 0:
                     delay = 400 # ~6.6 minutes
-                    logger.info(f"Waiting {delay} seconds before processing next news...")
+                    logger.info(f"Waiting {delay} seconds before processing next news (item {i+1}/{len(drafts)})...")
                     await asyncio.sleep(delay)
 
-                logger.info(f"Rewriting news: {draft.title}")
+                logger.info(f"--- Processing news {i+1}/{len(drafts)}: {draft.title} ---")
+                
+                # REWRITE STAGE
                 rewritten = await rewriter.rewrite(draft.original_text)
                 draft.rewritten_text = rewritten
                 db.commit()
                 
-                # 3. Publish
-                logger.info(f"Publishing news: {draft.title}")
+                # PUBLISH STAGE
+                logger.info(f"Publishing to Telegram: {draft.title}")
                 post_id = await publisher.publish(draft.rewritten_text, draft.image_url)
                 
                 draft.telegram_post_id = str(post_id)
                 draft.status = NewsStatus.published.value
                 draft.published_at = datetime.utcnow()
                 db.commit()
+                logger.info(f"Successfully published news ID {draft.id}. Post ID: {post_id}")
                 
             except Exception as e:
-                logger.error(f"Error processing news {draft.id}: {str(e)}")
+                logger.error(f"Error processing news {draft.id} ('{draft.title}'): {str(e)}")
                 draft.status = NewsStatus.error.value
                 draft.error_log = str(e)
                 db.commit()

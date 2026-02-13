@@ -14,32 +14,31 @@ class ContentRewriter:
 
     async def rewrite(self, text: str) -> str:
         """
-        Rewrites the input text into Kazakh language for a tourism news channel.
-        Implements a multi-step prompt logic (Copywriter -> Editor -> Chief Editor).
-        """
-        prompt = f"""
-        Сіз кәсіби қазақстандық туризм саласындағы журналистсіз. 
-        Төмендегі жаңалықты қазақ тілінде қайта жазып шығыңыз.
-        
-        Жаңалық тақырыбы: Туризм және саяхат.
-        Стиль: Қызықты, ақпараттық, оқырманға жақын.
-        Тіл: Қазақ тілі.
-        
-        Түпнұсқа мәтін:
-        {text}
-        
-        Тапсырма:
-        1. Мәтінді қазақ тіліне сапалы аударып, туризмге бағытталған стильде өңдеңіз.
-        2. Оқырманға пайдалы кеңестер немесе қызықты деректер қосыңыз (мүмкін болса).
-        3. Құрылымын жақсартыңыз: тартымды тақырып, негізгі бөлім, қорытынды.
-        
-        Тек қана дайын мәтінді қайтарыңыз.
+        Реализует многоступенчатую логику рерайта:
+        1. Копирайтер (черновик на казахском)
+        2. Редактор (проверка стиля и фактов)
+        3. Главный редактор (финальная шлифовка)
         """
         
+        # Шаг 1: Копирайтер
+        copywriter_prompt = f"Сделай качественный перевод и рерайт этой новости на казахский язык. Текст должен быть информативным и интересным для туристов:\n\n{text}"
+        draft = await self._call_ai("Копирайтер", copywriter_prompt)
+        
+        # Шаг 2: Редактор
+        editor_prompt = f"Проверь этот текст на казахском языке. Улучши стиль, исправь ошибки и сделай его более вовлекающим для читателей из Казахстана:\n\n{draft}"
+        edited_text = await self._call_ai("Редактор", editor_prompt)
+        
+        # Шаг 3: Главный редактор
+        chief_editor_prompt = f"Ты главный редактор туристического СМИ. Дай финальную версию этой новости на казахском. Добавь цепляющий заголовок в начале, используй эмодзи и оформи текст для Telegram-канала:\n\n{edited_text}"
+        final_text = await self._call_ai("Главный редактор", chief_editor_prompt)
+        
+        return final_text
+
+    async def _call_ai(self, role: str, prompt: str) -> str:
+        logger.info(f"Этап: {role} работает над текстом...")
         try:
-            # Using chat_completion for better instruction following and provider support
             messages = [
-                {"role": "system", "content": "Сіз кәсіби қазақстандық туризм саласындағы журналистсіз (копирайтер, редактор және бас редактор рөлдерін атқарасыз)."},
+                {"role": "system", "content": f"Сіз кәсіби қазақстандық туризм журналының {role} қызметін атқарасыз."},
                 {"role": "user", "content": prompt}
             ]
             
@@ -50,9 +49,11 @@ class ContentRewriter:
                 temperature=0.7,
                 provider="hf-inference"
             )
-            return response.choices[0].message.content.strip()
+            result = response.choices[0].message.content.strip()
+            logger.info(f"{role} завершил работу. Длина текста: {len(result)}")
+            return result
         except Exception as e:
-            logger.error(f"Error during rewriting: {str(e)}")
+            logger.error(f"Ошибка на этапе {role}: {str(e)}")
             raise e
 
 rewriter = ContentRewriter()
