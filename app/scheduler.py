@@ -34,10 +34,16 @@ async def process_news_task():
                 db.add(news_entry)
         db.commit()
 
-        # 2. Process drafts (Rewrite)
+        # 2. Process drafts (Rewrite and Publish with delay)
         drafts = db.query(NewsArchive).filter(NewsArchive.status == NewsStatus.draft.value).all()
-        for draft in drafts:
+        for i, draft in enumerate(drafts):
             try:
+                # If it's not the first news in this batch, wait before processing
+                if i > 0:
+                    delay = 400 # ~6.6 minutes
+                    logger.info(f"Waiting {delay} seconds before processing next news...")
+                    await asyncio.sleep(delay)
+
                 logger.info(f"Rewriting news: {draft.title}")
                 rewritten = await rewriter.rewrite(draft.original_text)
                 draft.rewritten_text = rewritten
