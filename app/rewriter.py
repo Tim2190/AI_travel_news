@@ -46,8 +46,8 @@ class ContentRewriter:
                 messages=messages,
                 model=self.model,
                 max_tokens=1500,
-                temperature=0.7,
-                provider="hf-inference"
+                temperature=0.7
+                # provider="hf-inference" удален, так как вызывает ошибку в текущей версии библиотеки
             )
             result = response.choices[0].message.content.strip()
             logger.info(f"{role} завершил работу. Длина текста: {len(result)}")

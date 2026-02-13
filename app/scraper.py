@@ -12,10 +12,16 @@ class NewsScraper:
 
     def scrape(self) -> List[Dict]:
         all_news = []
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
         for url in self.rss_urls:
             try:
                 logger.info(f"Checking RSS source: {url}")
-                feed = feedparser.parse(url)
+                # Fetch RSS with headers to avoid blocks
+                resp = requests.get(url, headers=headers, timeout=10)
+                feed = feedparser.parse(resp.content)
+                
                 logger.info(f"Found {len(feed.entries)} entries in {url}")
                 for entry in feed.entries:
                     news_item = {
@@ -56,7 +62,10 @@ class NewsScraper:
 
     def _fetch_full_text(self, url: str) -> str:
         try:
-            response = requests.get(url, timeout=10)
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            }
+            response = requests.get(url, headers=headers, timeout=10)
             soup = BeautifulSoup(response.content, "html.parser")
             # Basic logic: get all paragraphs from article/main content
             # This is highly dependent on the source site structure
