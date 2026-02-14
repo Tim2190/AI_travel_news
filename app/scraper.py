@@ -12,46 +12,103 @@ class NewsScraper:
 
     def scrape(self) -> List[Dict]:
         all_news = []
+        
+        # 1. Прямой скрапинг казахстанских сайтов
+        all_news.extend(self._scrape_tengri_travel())
+        all_news.extend(self._scrape_kapital_tourism())
+        
+        # 2. Мировые новости через RSS (стабильные источники)
+        all_news.extend(self._scrape_rss())
+        
+        logger.info(f"Total news gathered from all sources: {len(all_news)}")
+        return all_news
+
+    def _scrape_tengri_travel(self) -> List[Dict]:
+        logger.info("Direct scraping TengriTravel...")
+        news = []
+        try:
+            url = "https://tengritravel.kz/"
+            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"}
+            resp = requests.get(url, headers=headers, timeout=15)
+            soup = BeautifulSoup(resp.content, "html.parser")
+            
+            # Находим основные блоки новостей (селекторы зависят от верстки)
+            articles = soup.select(".tn-article-item")[:5] # Первые 5 новостей
+            for art in articles:
+                title_tag = art.select_one(".tn-article-title")
+                link_tag = art.select_one("a")
+                if title_tag and link_tag:
+                    title = title_tag.get_text(strip=True)
+                    link = "https://tengritravel.kz" + link_tag["href"] if not link_tag["href"].startswith("http") else link_tag["href"]
+                    
+                    full_text = self._fetch_full_text(link)
+                    news.append({
+                        "title": title,
+                        "original_text": full_text or title,
+                        "source_name": "TengriTravel",
+                        "source_url": link,
+                        "image_url": None # Можно добавить логику поиска картинки
+                    })
+        except Exception as e:
+            logger.error(f"Error scraping TengriTravel: {e}")
+        return news
+
+    def _scrape_kapital_tourism(self) -> List[Dict]:
+        logger.info("Direct scraping Kapital Tourism...")
+        news = []
+        try:
+            url = "https://kapital.kz/tourism"
+            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"}
+            resp = requests.get(url, headers=headers, timeout=15)
+            soup = BeautifulSoup(resp.content, "html.parser")
+            
+            articles = soup.select(".main-news__item, .news-list__item")[:5]
+            for art in articles:
+                title_tag = art.select_one("a.main-news__title, a.news-list__title")
+                if title_tag:
+                    title = title_tag.get_text(strip=True)
+                    link = "https://kapital.kz" + title_tag["href"] if not title_tag["href"].startswith("http") else title_tag["href"]
+                    
+                    full_text = self._fetch_full_text(link)
+                    news.append({
+                        "title": title,
+                        "original_text": full_text or title,
+                        "source_name": "Kapital Tourism",
+                        "source_url": link,
+                        "image_url": None
+                    })
+        except Exception as e:
+            logger.error(f"Error scraping Kapital: {e}")
+        return news
+
+    def _scrape_rss(self) -> List[Dict]:
+        rss_news = []
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.9,ru;q=0.8",
         }
         for url in self.rss_urls:
             try:
                 logger.info(f"Checking RSS source: {url}")
                 resp = requests.get(url, headers=headers, timeout=15)
-                if resp.status_code != 200:
-                    logger.error(f"Failed to fetch {url}: Status {resp.status_code}")
-                    continue
+                if resp.status_code != 200: continue
                 
                 feed = feedparser.parse(resp.content)
-                
-                logger.info(f"Found {len(feed.entries)} entries in {url}")
-                for entry in feed.entries:
-                    news_item = {
-                        "title": entry.get("title", "").strip(),
-                        "original_text": entry.get("summary", entry.get("description", "")),
-                        "source_name": feed.feed.get("title", url),
-                        "source_url": entry.get("link", "").strip(),
-                        "image_url": self._extract_image(entry)
-                    }
-                    if not news_item["title"] or not news_item["source_url"]:
-                        continue
-                        
-                    # If original_text is too short, try to fetch full content
-                    if len(news_item["original_text"]) < 200:
-                        logger.info(f"Text too short for '{news_item['title']}', fetching full content...")
-                        full_text = self._fetch_full_text(news_item["source_url"])
-                        if full_text:
-                            news_item["original_text"] = full_text
+                for entry in feed.entries[:5]:
+                    link = entry.get("link", "").strip()
+                    if not link: continue
                     
-                    all_news.append(news_item)
+                    full_text = self._fetch_full_text(link)
+                    rss_news.append({
+                        "title": entry.get("title", "").strip(),
+                        "original_text": full_text or entry.get("summary", ""),
+                        "source_name": feed.feed.get("title", "World News"),
+                        "source_url": link,
+                        "image_url": self._extract_image(entry)
+                    })
             except Exception as e:
-                logger.error(f"Error scraping RSS {url}: {str(e)}")
-        
-        logger.info(f"Total news gathered from all sources: {len(all_news)}")
-        return all_news
+                logger.error(f"Error RSS {url}: {e}")
+        return rss_news
 
     def _extract_image(self, entry) -> str:
         # Try to find image in enclosures or media content
@@ -82,14 +139,11 @@ class NewsScraper:
         except:
             return None
 
-# Расширенный список источников: Казахстан + Мировые новости туризма
+# Глобальные источники (стабильные)
 rss_urls: List[str] = [
-    "https://www.skift.com/feed/",             # Аналитика и новости (Skift) - РАБОТАЕТ
-    "https://www.kazpravda.kz/rss/society/",   # Новости Казахстана (Казправда) - Стабильно
-    "https://www.inform.kz/rss/kazakhstan_news.rss", # Казинформ - Стабильно
-    "https://tengrinews.kz/kazakhstan_news.rss", # Тенгри - Попробуем еще раз с новыми заголовками
-    "https://www.cnbc.com/id/10000739/device/rss/rss.html", # CNBC Travel - Глобальные новости
-    "https://www.euronews.com/rss?level=vertical&name=travel", # Euronews Travel
+    "https://www.skift.com/feed/",
+    "https://www.euronews.com/rss?level=vertical&name=travel",
+    "https://www.cnbc.com/id/10000739/device/rss/rss.html",
 ]
 
 scraper = NewsScraper(rss_urls)

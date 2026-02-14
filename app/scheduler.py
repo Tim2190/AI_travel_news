@@ -62,6 +62,13 @@ async def process_news_task():
                 
                 # REWRITE STAGE
                 rewritten = await rewriter.rewrite(draft.original_text)
+                if not rewritten:
+                    logger.info(f"News ID {draft.id} rejected by editors.")
+                    draft.status = NewsStatus.error.value
+                    draft.error_log = "Rejected by editors (significance or legal check)"
+                    db.commit()
+                    continue
+
                 draft.rewritten_text = rewritten
                 db.commit()
                 
