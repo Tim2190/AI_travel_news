@@ -80,7 +80,9 @@ TOURISM_RSS_FEEDS = [
     "https://kapital.kz/rss/tourism",         # Бизнес-туризм КЗ
     "https://www.travelpulse.com/rss/news",    # Мировые новости (TravelPulse)
     "https://www.skift.com/feed/",             # Аналитика и новости (Skift)
-    "https://www.travelweekly.com/RSS/Lead-Stories", # Индустрия (Travel Weekly)
+    "https://www.travelweekly.com/RSS/Hotels", # Исправленная ссылка
+    "https://www.travelweekly.com/RSS/Destinations", # Дополнительная
+    "https://tengrinews.kz/kazakhstan_news.rss", # Общие новости КЗ (часто есть туризм)
 ]
 
 scraper = NewsScraper(TOURISM_RSS_FEEDS)
