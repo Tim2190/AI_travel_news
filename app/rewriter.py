@@ -14,29 +14,29 @@ class ContentRewriter:
         """
         Многоступенчатая обработка: Журналист -> Редактор -> Главред.
         """
-        journalist_prompt = f"""You are a professional journalist at a Kazakh tourism media.
-TASK: Translate and rewrite the following source into high-quality Kazakh suitable for publication.
+        journalist_prompt = f"""Вы — профессиональный журналист туристического медиа.
+ЗАДАЧА: Переведите и переработайте источник в качественную новость на русском языке, готовую к публикации.
 
 STRICT RULES:
-1) Use formal, literary Kazakh only. Do not invent words or use mixed slang.
-2) Do not change geography. Keep locations exactly as in the source.
-3) Do not add facts. Use only information present in the source.
-4) One post = one specific news story. Do not merge multiple topics.
-5) Format for a Telegram post: one catchy headline, 3–5 short paragraphs, and 2–3 relevant emojis.
-6) Output ONLY the final news text in Kazakh. No reasoning, no meta-comments, no explanations.
+1) Используйте формальный, литературный русский. Не придумывайте слова и не используйте жаргон.
+2) Не меняйте географию: локации должны полностью соответствовать источнику.
+3) Не добавляйте факты: работайте только с тем, что есть в источнике.
+4) Один пост = одна конкретная новость. Не смешивайте разные темы.
+5) Формат для Telegram: один цепляющий заголовок, 3–5 коротких абзацев, 2–3 релевантных эмодзи.
+6) Выведите ТОЛЬКО финальный текст новости на русском. Без рассуждений и служебных пометок.
 
 Source:
 {text}"""
         draft = await self._call_ai("Журналист", journalist_prompt, self.model_journalist)
         draft = draft.strip()
         
-        editor_prompt = f"""You are an editor at a Kazakh tourism media. Evaluate the text for newsworthiness, quality, and factual consistency.
+        editor_prompt = f"""Вы — редактор туристического медиа. Оцените текст на новостную ценность, качество и фактологическую корректность.
 
 RULES:
-1) If the text is low-quality, insignificant, or distorts facts, reply ONLY with: REJECT
-2) If the text is good and factually consistent, reply ONLY with: APPROVE
+1) Если текст низкого качества, малозначимый или искажает факты — ответ ТОЛЬКО: REJECT
+2) Если текст качественный и соответствует фактам — ответ ТОЛЬКО: APPROVE
 
-NO explanations. Reply with exactly one word: REJECT or APPROVE.
+Без объяснений. Ответьте ровно одним словом: REJECT или APPROVE.
 
 Text:
 {draft}"""
@@ -46,14 +46,14 @@ Text:
             logger.warning("Редактор отклонил новость.")
             return None
 
-        chief_editor_prompt = f"""You are the chief editor. Check the text for compliance with Kazakhstan media law and general ethics.
+        chief_editor_prompt = f"""Вы — главный редактор. Проверьте текст на соответствие законодательству о СМИ и базовой этике.
 
 GUIDELINES:
-1) Be reasonable: only block content with clear legal/ethical violations.
-2) If there is a violation, reply ONLY with: REJECT
-3) If it is safe to publish, reply ONLY with: APPROVE
+1) Будьте разумны: блокируйте только явные юридические/этические нарушения.
+2) Если есть нарушение — ответ ТОЛЬКО: REJECT
+3) Если публикация безопасна — ответ ТОЛЬКО: APPROVE
 
-NO explanations. Reply with exactly one word: REJECT or APPROVE.
+Без объяснений. Ответьте ровно одним словом: REJECT или APPROVE.
 
 Text:
 {draft}"""
@@ -64,10 +64,10 @@ Text:
             return None
 
         # Финальная языковая полировка (строго без изменений фактов и географии)
-        polisher_prompt = f"""You are a Kazakh language proofreader for a tourism media.
-Polish the following Kazakh text WITHOUT changing facts or locations, and WITHOUT adding any new information.
-Ensure: formal style, clear structure (3–5 short paragraphs), single-topic coherence, correct grammar and terminology.
-Output ONLY the final news text in Kazakh. Do not include explanations.
+        polisher_prompt = f"""Вы — русскоязычный литературный редактор туристического медиа.
+Отредактируйте следующий текст БЕЗ изменения фактов и географии, и БЕЗ добавления новой информации.
+Требования: формальный стиль, чёткая структура (3–5 коротких абзацев), единая тема, корректная грамматика и терминология.
+Выведите ТОЛЬКО финальный текст новости на русском. Без объяснений.
 
 Text:
 {draft}"""
@@ -76,9 +76,9 @@ Text:
 
         # Если текст выглядит незавершенным, аккуратно завершить
         if self._looks_incomplete(final_text):
-            completer_prompt = f"""Continue the following Kazakh news text naturally and conclude it.
-Do NOT repeat the beginning, do NOT add new facts beyond the source, and keep formal style.
-Return ONLY the continuation/completion in Kazakh.
+            completer_prompt = f"""Продолжите следующий новостной текст на русском и естественно завершите его.
+Не повторяйте начало, не добавляйте новых фактов сверх источника, соблюдайте формальный стиль.
+Верните ТОЛЬКО завершение/продолжение на русском.
 
 Text:
 {final_text}"""
@@ -91,7 +91,7 @@ Text:
         logger.info(f"Этап: {role} ({model}) работает над текстом...")
         try:
             messages = [
-                {"role": "system", "content": f"You are a professional {role} for a Kazakh tourism media. Always respond in Kazakh (kk-KZ)."},
+                {"role": "system", "content": f"Вы — профессиональный {role} туристического медиа. Всегда отвечайте на русском (ru-RU)."},
                 {"role": "user", "content": prompt}
             ]
             response = self.client.chat_completion(
