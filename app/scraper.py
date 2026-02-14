@@ -30,10 +30,10 @@ class NewsScraper:
                 logger.info(f"Found {len(feed.entries)} entries in {url}")
                 for entry in feed.entries:
                     news_item = {
-                        "title": entry.get("title", ""),
+                        "title": entry.get("title", "").strip(),
                         "original_text": entry.get("summary", entry.get("description", "")),
                         "source_name": feed.feed.get("title", url),
-                        "source_url": entry.get("link", ""),
+                        "source_url": entry.get("link", "").strip(),
                         "image_url": self._extract_image(entry)
                     }
                     if not news_item["title"] or not news_item["source_url"]:
@@ -83,14 +83,13 @@ class NewsScraper:
             return None
 
 # Расширенный список источников: Казахстан + Мировые новости туризма
-TOURISM_RSS_FEEDS = [
-    "https://tengritravel.kz/rss/",           # Казахстан
-    "https://kapital.kz/rss/tourism",         # Бизнес-туризм КЗ
-    "https://www.travelpulse.com/rss/news",    # Мировые новости (TravelPulse)
-    "https://www.skift.com/feed/",             # Аналитика и новости (Skift)
-    "https://www.travelweekly.com/RSS/Hotels", # Исправленная ссылка
-    "https://www.travelweekly.com/RSS/Destinations", # Дополнительная
-    "https://tengrinews.kz/kazakhstan_news.rss", # Общие новости КЗ (часто есть туризм)
+rss_urls: List[str] = [
+    "https://www.skift.com/feed/",             # Аналитика и новости (Skift) - РАБОТАЕТ
+    "https://www.kazpravda.kz/rss/society/",   # Новости Казахстана (Казправда) - Стабильно
+    "https://www.inform.kz/rss/kazakhstan_news.rss", # Казинформ - Стабильно
+    "https://tengrinews.kz/kazakhstan_news.rss", # Тенгри - Попробуем еще раз с новыми заголовками
+    "https://www.cnbc.com/id/10000739/device/rss/rss.html", # CNBC Travel - Глобальные новости
+    "https://www.euronews.com/rss?level=vertical&name=travel", # Euronews Travel
 ]
 
-scraper = NewsScraper(TOURISM_RSS_FEEDS)
+scraper = NewsScraper(rss_urls)

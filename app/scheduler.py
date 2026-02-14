@@ -48,6 +48,10 @@ async def process_news_task():
         
         for i, draft in enumerate(drafts):
             try:
+                # Refresh session and object to avoid stale connection issues after long sleep
+                db.expire_all()
+                draft = db.merge(draft)
+                
                 # If it's not the first news in this batch, wait before processing
                 if i > 0:
                     delay = 400 # ~6.6 minutes

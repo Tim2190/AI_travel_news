@@ -29,7 +29,13 @@ class NewsArchive(Base):
     published_at = Column(DateTime, nullable=True)
     error_log = Column(Text, nullable=True)
 
-engine = create_engine(settings.DATABASE_URL)
+engine = create_engine(
+    settings.DATABASE_URL,
+    pool_pre_ping=True,  # Проверяет соединение перед каждым запросом
+    pool_recycle=300,    # Пересоздает соединение каждые 5 минут
+    pool_size=10,        # Размер пула
+    max_overflow=20      # Максимальное количество дополнительных соединений
+)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def init_db():
