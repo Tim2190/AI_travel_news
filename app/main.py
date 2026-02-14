@@ -24,6 +24,10 @@ async def startup_event():
 async def root():
     return {"status": "ok", "message": "AI Travel News System is running"}
 
+@app.get("/health")
+async def health():
+    return {"status": "healthy"}
+
 @app.get("/trigger-manual")
 async def trigger_manual(background_tasks: BackgroundTasks):
     """

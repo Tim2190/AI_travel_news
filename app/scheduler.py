@@ -6,6 +6,7 @@ from .database import SessionLocal, NewsArchive, NewsStatus
 from .scraper import scraper
 from .rewriter import rewriter
 from .publisher import publisher
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -42,51 +43,47 @@ async def process_news_task():
         db.commit()
         logger.info(f"Successfully added {added_count} new unique news items to database.")
 
-        # 2. Process drafts (Rewrite and Publish with delay)
-        drafts = db.query(NewsArchive).filter(NewsArchive.status == NewsStatus.draft.value).all()
-        logger.info(f"Found {len(drafts)} drafts waiting to be processed.")
-        
-        for i, draft in enumerate(drafts):
-            try:
-                # Refresh session and object to avoid stale connection issues after long sleep
-                db.expire_all()
-                draft = db.merge(draft)
-                
-                # If it's not the first news in this batch, wait before processing
-                if i > 0:
-                    delay = 400 # ~6.6 minutes
-                    logger.info(f"Waiting {delay} seconds before processing next news (item {i+1}/{len(drafts)})...")
-                    await asyncio.sleep(delay)
-
-                logger.info(f"--- Processing news {i+1}/{len(drafts)}: {draft.title} ---")
-                
-                # REWRITE STAGE
-                rewritten = await rewriter.rewrite(draft.original_text)
-                if not rewritten:
-                    logger.info(f"News ID {draft.id} rejected by editors.")
-                    draft.status = NewsStatus.error.value
-                    draft.error_log = "Rejected by editors (significance or legal check)"
-                    db.commit()
-                    continue
-
-                draft.rewritten_text = rewritten
-                db.commit()
-                
-                # PUBLISH STAGE
-                logger.info(f"Publishing to Telegram: {draft.title}")
-                post_id = await publisher.publish(draft.rewritten_text, draft.image_url)
-                
-                draft.telegram_post_id = str(post_id)
-                draft.status = NewsStatus.published.value
-                draft.published_at = datetime.utcnow()
-                db.commit()
-                logger.info(f"Successfully published news ID {draft.id}. Post ID: {post_id}")
-                
-            except Exception as e:
-                logger.error(f"Error processing news {draft.id} ('{draft.title}'): {str(e)}")
+        # 2. Process only one draft per cycle (ensures 1 news every interval)
+        draft = (
+            db.query(NewsArchive)
+            .filter(NewsArchive.status == NewsStatus.draft.value)
+            .order_by(NewsArchive.created_at.asc())
+            .first()
+        )
+        if not draft:
+            logger.info("No drafts to process at this time.")
+            return
+        try:
+            # Refresh session object
+            db.expire_all()
+            draft = db.merge(draft)
+            logger.info(f"--- Processing single news: {draft.title} ---")
+            
+            # REWRITE STAGE
+            rewritten = await rewriter.rewrite(draft.original_text)
+            if not rewritten:
+                logger.info(f"News ID {draft.id} rejected by editors.")
                 draft.status = NewsStatus.error.value
-                draft.error_log = str(e)
+                draft.error_log = "Rejected by editors (significance or legal check)"
                 db.commit()
+                return
+            draft.rewritten_text = rewritten
+            db.commit()
+            
+            # PUBLISH STAGE
+            logger.info(f"Publishing to Telegram: {draft.title}")
+            post_id = await publisher.publish(draft.rewritten_text, draft.image_url)
+            
+            draft.telegram_post_id = str(post_id)
+            draft.status = NewsStatus.published.value
+            draft.published_at = datetime.utcnow()
+            db.commit()
+            logger.info(f"Successfully published news ID {draft.id}. Post ID: {post_id}")
+        except Exception as e:
+            logger.error(f"Error processing news {draft.id} ('{draft.title}'): {str(e)}")
+            draft.status = NewsStatus.error.value
+            draft.error_log = str(e)
+            db.commit()
 
     except Exception as e:
         logger.error(f"Error in process_news_task: {str(e)}")
@@ -100,5 +97,13 @@ def start_scheduler():
 
     scheduler = AsyncIOScheduler()
     scheduler.add_job(process_news_task, 'interval', minutes=settings.SCRAPE_INTERVAL_MINUTES)
+    # Keepalive ping to prevent sleep
+    def ping_self():
+        try:
+            requests.get("http://127.0.0.1:8000/health", timeout=5)
+            logger.info("Keepalive ping OK")
+        except Exception as e:
+            logger.warning(f"Keepalive ping failed: {e}")
+    scheduler.add_job(ping_self, 'interval', minutes=4)
     scheduler.start()
     return scheduler

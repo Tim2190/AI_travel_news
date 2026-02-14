@@ -139,11 +139,11 @@ class NewsScraper:
         except:
             return None
 
-# Глобальные источники (стабильные)
+# Казахстан и СНГ (русскоязычные/региональные источники)
 rss_urls: List[str] = [
-    "https://www.skift.com/feed/",
-    "https://www.euronews.com/rss?level=vertical&name=travel",
-    "https://www.cnbc.com/id/10000739/device/rss/rss.html",
+    "https://www.inform.kz/rss/kazakhstan_news.rss",   # Казинформ
+    "https://www.kazpravda.kz/rss/society/",           # Казправда
+    "https://tengrinews.kz/kazakhstan_news.rss",       # Тенгри (общие новости)
 ]
 
 scraper = NewsScraper(rss_urls)
