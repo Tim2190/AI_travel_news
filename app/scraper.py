@@ -13,13 +13,18 @@ class NewsScraper:
     def scrape(self) -> List[Dict]:
         all_news = []
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9,ru;q=0.8",
         }
         for url in self.rss_urls:
             try:
                 logger.info(f"Checking RSS source: {url}")
-                # Fetch RSS with headers to avoid blocks
-                resp = requests.get(url, headers=headers, timeout=10)
+                resp = requests.get(url, headers=headers, timeout=15)
+                if resp.status_code != 200:
+                    logger.error(f"Failed to fetch {url}: Status {resp.status_code}")
+                    continue
+                
                 feed = feedparser.parse(resp.content)
                 
                 logger.info(f"Found {len(feed.entries)} entries in {url}")
@@ -63,9 +68,12 @@ class NewsScraper:
     def _fetch_full_text(self, url: str) -> str:
         try:
             headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
             }
-            response = requests.get(url, headers=headers, timeout=10)
+            response = requests.get(url, headers=headers, timeout=15)
+            if response.status_code != 200:
+                return None
             soup = BeautifulSoup(response.content, "html.parser")
             # Basic logic: get all paragraphs from article/main content
             # This is highly dependent on the source site structure

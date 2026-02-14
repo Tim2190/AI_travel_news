@@ -4,7 +4,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql://user:password@localhost:5432/dbname"
     HF_API_KEY: str
-    HF_MODEL: str = "mistralai/Mistral-7B-Instruct-v0.3"
+    HF_MODEL: str = "meta-llama/Llama-3.1-8B-Instruct"
     TELEGRAM_BOT_TOKEN: str
     TELEGRAM_CHAT_ID: str
     SCRAPE_INTERVAL_MINUTES: int = 30
