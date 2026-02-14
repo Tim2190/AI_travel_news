@@ -14,51 +14,46 @@ class ContentRewriter:
         """
         Многоступенчатая обработка: Журналист -> Редактор -> Главред.
         """
-        # Шаг 1: Журналист (Qwen2.5-72B) - Качественный перевод и рерайт
-        journalist_prompt = f"""Сіз кәсіби қазақстандық туризм журналисісіз. 
-ТАПСЫРМА: Төмендегі мәтінді қазақ тіліне аударып, тартымды жаңалық жазыңыз.
+        journalist_prompt = f"""You are a professional journalist at a Kazakh tourism media.
+TASK: Translate and rewrite the following source into high-quality Kazakh suitable for publication.
 
-ҚАТАҢ ЕРЕЖЕЛЕР:
-1. Тек қана ресми және әдеби қазақ тілін қолданыңыз. "Мадани мұнайтысы" сияқты ойдан шығарылған сөздерді қолдануға ТЫЙЫМ салынады.
-2. ГЕОГРАФИЯНЫ ӨЗГЕРТПЕҢІЗ: Егер оқиға Еуропада болса, ол Еуропа болып қалуы тиіс. Оқиғаны Қазақстанға телімеңіз.
-3. ФАКТІЛЕРДІ ОЙДАН ШЫҒАРМАҢЫЗ: Тек түпнұсқада бар ақпаратты қолданыңыз.
-4. Мәтін Telegram арнасына арналған: қызықты заголовок, құрылымдалған мәтін және 2-3 эмодзи қолданыңыз.
+STRICT RULES:
+1) Use formal, literary Kazakh only. Do not invent words or use mixed slang.
+2) Do not change geography. Keep locations exactly as in the source.
+3) Do not add facts. Use only information present in the source.
+4) Format for a Telegram post: catchy headline, structured body, and 2–3 relevant emojis.
 
-Түпнұсқа мәтін:
-{text}
-"""
+Source:
+{text}"""
         draft = await self._call_ai("Журналист", journalist_prompt, self.model_journalist)
         
-        # Шаг 2: Редактор (Llama-3.1-8B) - Проверка качества и ценности
-        editor_prompt = f"""Сіз туристік басылымның редакторысыз. Төмендегі мәтінді сапа мен маңыздылыққа тексеріңіз.
+        editor_prompt = f"""You are an editor at a Kazakh tourism media. Evaluate the text for newsworthiness, quality, and factual consistency.
 
-ЕРЕЖЕ:
-1. Егер мәтін сапасыз, мағынасыз немесе фактілер бұрмаланған болса, ТЕК ҚАНА "REJECT" сөзін жазыңыз.
-2. Егер мәтін жақсы болса, ТЕК ҚАНА "APPROVE" сөзін жазыңыз.
+RULES:
+1) If the text is low-quality, insignificant, or distorts facts, reply ONLY with: REJECT
+2) If the text is good and factually consistent, reply ONLY with: APPROVE
 
-ЕШҚАНДАЙ ТҮСІНІКТЕМЕ ЖАЗБАҢЫЗ. ТЕК БІР СӨЗ: REJECT НЕМЕСЕ APPROVE.
+NO explanations. Reply with exactly one word: REJECT or APPROVE.
 
-Мәтін:
-{draft}
-"""
+Text:
+{draft}"""
         editor_decision = await self._call_ai("Редактор", editor_prompt, self.model_editor)
         
         if "REJECT" in editor_decision.upper():
             logger.warning("Редактор отклонил новость.")
             return None
 
-        # Шаг 3: Главный редактор (Llama-3.1-8B) - Юридическая проверка
-        chief_editor_prompt = f"""Сіз Бас редакторсыз. Мәтінді заңнамалық және этикалық нормаларға тексеріңіз.
+        chief_editor_prompt = f"""You are the chief editor. Check the text for compliance with Kazakhstan media law and general ethics.
 
-ЕРЕЖЕ:
-1. Егер мәтінде ҚР заңнамасын бұзу немесе этикаға жат нәрсе болса, ТЕК ҚАНА "REJECT" сөзін жазыңыз.
-2. Егер бәрі дұрыс болса, ТЕК ҚАНА "APPROVE" сөзін жазыңыз.
+GUIDELINES:
+1) Be reasonable: only block content with clear legal/ethical violations.
+2) If there is a violation, reply ONLY with: REJECT
+3) If it is safe to publish, reply ONLY with: APPROVE
 
-ЕШҚАНДАЙ ТҮСІНІКТЕМЕ ЖАЗБАҢЫЗ. ТЕК БІР СӨЗ: REJECT НЕМЕСЕ APPROVE.
+NO explanations. Reply with exactly one word: REJECT or APPROVE.
 
-Мәтін:
-{draft}
-"""
+Text:
+{draft}"""
         chief_decision = await self._call_ai("Бас редактор", chief_editor_prompt, self.model_editor)
 
         if "REJECT" in chief_decision.upper():
@@ -72,7 +67,7 @@ class ContentRewriter:
         logger.info(f"Этап: {role} ({model}) работает над текстом...")
         try:
             messages = [
-                {"role": "system", "content": f"Сіз кәсіби қазақстандық туризм журналының {role} қызметін атқарасыз. Тек қазақ тілінде жауап беріңіз."},
+                {"role": "system", "content": f"You are a professional {role} for a Kazakh tourism media. Always respond in Kazakh (kk-KZ)."},
                 {"role": "user", "content": prompt}
             ]
             response = self.client.chat_completion(
