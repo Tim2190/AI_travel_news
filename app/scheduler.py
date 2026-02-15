@@ -1,4 +1,5 @@
 import asyncio
+import html
 import logging
 from datetime import datetime
 from sqlalchemy.orm import Session
@@ -105,7 +106,9 @@ async def process_news_task():
             
             # PUBLISH STAGE
             logger.info(f"Publishing to Telegram: {draft.title}")
-            final_text = f"{draft.rewritten_text}\n\n<i>Источник: {draft.source_name}</i>"
+            # Ссылка на конкретный материал (оригинал статьи)
+            safe_url = html.escape(draft.source_url, quote=True)
+            final_text = f"{draft.rewritten_text}\n\n<a href=\"{safe_url}\">Түпнұсқа</a>"
             post_id = await publisher.publish(final_text, draft.image_url)
             
             draft.telegram_post_id = str(post_id)
