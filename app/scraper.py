@@ -6,79 +6,95 @@ from typing import List, Dict
 
 logger = logging.getLogger(__name__)
 
+# Источники БЕЗ RSS: мониторинг через прямой парсинг страницы (селекторы под свой сайт)
+# Добавляй сюда любые СМИ без RSS: укажи URL страницы со списком новостей и селекторы
+DIRECT_SCRAPE_SOURCES: List[Dict] = [
+    {
+        "name": "TengriTravel",
+        "url": "https://tengritravel.kz/",
+        "article_selector": ".tn-article-item",
+        "title_selector": ".tn-article-title",
+        "link_selector": "a",
+        "base_url": "https://tengritravel.kz",
+    },
+    {
+        "name": "Kapital Tourism",
+        "url": "https://kapital.kz/tourism",
+        "article_selector": ".main-news__item, .news-list__item",
+        "title_selector": "a.main-news__title, a.news-list__title",
+        "link_selector": "a.main-news__title, a.news-list__title",
+        "base_url": "https://kapital.kz",
+    },
+    # Пример добавления другого СМИ без RSS (раскомментируй и подставь селекторы):
+    # {
+    #     "name": "Название СМИ",
+    #     "url": "https://example.com/news",
+    #     "article_selector": ".news-item",
+    #     "title_selector": "h2 a",
+    #     "link_selector": "h2 a",
+    #     "base_url": "https://example.com",
+    # },
+]
+
+
 class NewsScraper:
-    def __init__(self, rss_urls: List[str]):
+    def __init__(self, rss_urls: List[str], direct_sources: List[Dict] = None):
         self.rss_urls = rss_urls
+        self.direct_sources = direct_sources or DIRECT_SCRAPE_SOURCES
 
     def scrape(self) -> List[Dict]:
         all_news = []
-        
-        # 1. Прямой скрапинг казахстанских сайтов
-        all_news.extend(self._scrape_tengri_travel())
-        all_news.extend(self._scrape_kapital_tourism())
-        
-        # 2. Мировые новости через RSS (стабильные источники)
+
+        # 1. Прямой скрапинг СМИ без RSS (конфигурируемый список)
+        for source in self.direct_sources:
+            all_news.extend(self._scrape_direct_source(source))
+
+        # 2. RSS-источники
         all_news.extend(self._scrape_rss())
-        
+
         logger.info(f"Total news gathered from all sources: {len(all_news)}")
         return all_news
 
-    def _scrape_tengri_travel(self) -> List[Dict]:
-        logger.info("Direct scraping TengriTravel...")
+    def _scrape_direct_source(self, config: Dict) -> List[Dict]:
+        """Парсит страницу со списком статей по селекторам (для СМИ без RSS)."""
+        name = config.get("name", "Unknown")
+        url = config.get("url")
+        article_sel = config.get("article_selector")
+        title_sel = config.get("title_selector")
+        link_sel = config.get("link_selector", "a")
+        base_url = config.get("base_url", "").rstrip("/")
+        if not url or not article_sel or not title_sel:
+            logger.warning(f"Direct source '{name}' skipped: missing url/article_selector/title_selector")
+            return []
         news = []
         try:
-            url = "https://tengritravel.kz/"
+            logger.info(f"Direct scraping {name}...")
             headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"}
             resp = requests.get(url, headers=headers, timeout=15)
             soup = BeautifulSoup(resp.content, "html.parser")
-            
-            # Находим основные блоки новостей (селекторы зависят от верстки)
-            articles = soup.select(".tn-article-item")[:5] # Первые 5 новостей
+            articles = soup.select(article_sel)[:5]
             for art in articles:
-                title_tag = art.select_one(".tn-article-title")
-                link_tag = art.select_one("a")
-                if title_tag and link_tag:
-                    title = title_tag.get_text(strip=True)
-                    link = "https://tengritravel.kz" + link_tag["href"] if not link_tag["href"].startswith("http") else link_tag["href"]
-                    
-                    full_text, image_url = self._fetch_full_text_and_image(link)
-                    news.append({
-                        "title": title,
-                        "original_text": full_text or title,
-                        "source_name": "TengriTravel",
-                        "source_url": link,
-                        "image_url": image_url
-                    })
+                title_el = art.select_one(title_sel)
+                link_el = art.select_one(link_sel) if link_sel else title_el
+                if not title_el or not link_el:
+                    continue
+                title = title_el.get_text(strip=True)
+                href = link_el.get("href", "")
+                if not href:
+                    continue
+                link = (base_url + href) if href.startswith("/") else href
+                if not link.startswith("http"):
+                    link = base_url + "/" + link
+                full_text, image_url = self._fetch_full_text_and_image(link)
+                news.append({
+                    "title": title,
+                    "original_text": full_text or title,
+                    "source_name": name,
+                    "source_url": link,
+                    "image_url": image_url,
+                })
         except Exception as e:
-            logger.error(f"Error scraping TengriTravel: {e}")
-        return news
-
-    def _scrape_kapital_tourism(self) -> List[Dict]:
-        logger.info("Direct scraping Kapital Tourism...")
-        news = []
-        try:
-            url = "https://kapital.kz/tourism"
-            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"}
-            resp = requests.get(url, headers=headers, timeout=15)
-            soup = BeautifulSoup(resp.content, "html.parser")
-            
-            articles = soup.select(".main-news__item, .news-list__item")[:5]
-            for art in articles:
-                title_tag = art.select_one("a.main-news__title, a.news-list__title")
-                if title_tag:
-                    title = title_tag.get_text(strip=True)
-                    link = "https://kapital.kz" + title_tag["href"] if not title_tag["href"].startswith("http") else title_tag["href"]
-                    
-                    full_text, image_url = self._fetch_full_text_and_image(link)
-                    news.append({
-                        "title": title,
-                        "original_text": full_text or title,
-                        "source_name": "Kapital Tourism",
-                        "source_url": link,
-                        "image_url": image_url
-                    })
-        except Exception as e:
-            logger.error(f"Error scraping Kapital: {e}")
+            logger.error(f"Error scraping {name}: {e}")
         return news
 
     def _scrape_rss(self) -> List[Dict]:

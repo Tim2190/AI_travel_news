@@ -1,4 +1,5 @@
 import logging
+import os
 from fastapi import FastAPI, BackgroundTasks
 from .database import init_db, cleanup_old_tourism_news
 from .scheduler import start_scheduler, process_news_task
@@ -40,4 +41,5 @@ async def trigger_manual(background_tasks: BackgroundTasks):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    port = int(os.environ.get("PORT", "8000"))
+    uvicorn.run(app, host="0.0.0.0", port=port)

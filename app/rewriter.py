@@ -95,7 +95,7 @@ Text:
         return self._sanitize_published_text(final_text)
 
     async def _call_ai(self, role: str, prompt: str) -> str:
-        logger.info(f"Этап: {role} ({model}) работает над текстом...")
+        logger.info(f"Этап: {role} ({self.model}) работает над текстом...")
         try:
             messages = [
                 {"role": "system", "content": f"Ты — профессиональный {role} в русскоязычном экономическом медиа. Всегда отвечай по-русски."},
