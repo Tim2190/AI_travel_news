@@ -1,8 +1,9 @@
+import asyncio
 import logging
 import os
 from fastapi import FastAPI, BackgroundTasks
 from .database import init_db, cleanup_old_tourism_news
-from .scheduler import start_scheduler, process_news_task
+from .scheduler import start_scheduler, process_news_task, scrape_news_task
 from .config import settings
 
 # Setup logging
@@ -22,6 +23,9 @@ async def startup_event():
     cleanup_old_tourism_news()
     logger.info("Starting scheduler...")
     start_scheduler()
+    # Запуск скрапера сразу при старте (иначе первый раз только через SCRAPE_INTERVAL_MINUTES)
+    asyncio.create_task(scrape_news_task())
+    logger.info("Initial scrape task scheduled (run once at startup).")
 
 @app.get("/")
 async def root():
@@ -31,10 +35,18 @@ async def root():
 async def health():
     return {"status": "healthy"}
 
+@app.get("/trigger-scrape")
+async def trigger_scrape(background_tasks: BackgroundTasks):
+    """
+    Вручную запустить скрапер (сбор новостей в черновики).
+    """
+    background_tasks.add_task(scrape_news_task)
+    return {"message": "Scrape task triggered in background"}
+
 @app.get("/trigger-manual")
 async def trigger_manual(background_tasks: BackgroundTasks):
     """
-    Manually trigger the news processing task.
+    Вручную запустить обработку одного черновика (рерайт + публикация в Telegram).
     """
     background_tasks.add_task(process_news_task)
     return {"message": "Processing task triggered in background"}
