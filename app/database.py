@@ -60,6 +60,16 @@ def ensure_migrations():
             _log.warning("Migration normalized_title skipped (already exists or not supported): %s", e)
         try:
             conn.execute(text("""
+                ALTER TABLE news_archive
+                ADD COLUMN IF NOT EXISTS source_published_at TIMESTAMP
+            """))
+            conn.commit()
+            _log.info("Migration: source_published_at column ensured.")
+        except Exception as e:
+            conn.rollback()
+            _log.warning("Migration source_published_at skipped: %s", e)
+        try:
+            conn.execute(text("""
                 CREATE INDEX IF NOT EXISTS ix_news_archive_normalized_title
                 ON news_archive(normalized_title)
             """))
