@@ -163,9 +163,21 @@ class NewsScraper:
 
 # Казахстан и СНГ (русскоязычные/региональные источники)
 rss_urls: List[str] = [
-    "https://www.inform.kz/rss/kazakhstan_news.rss",   # Казинформ
-    "https://www.kazpravda.kz/rss/society/",           # Казправда
-    "https://tengrinews.kz/kazakhstan_news.rss",       # Тенгри (общие новости)
+    "https://tengrinews.kz/kazakhstan_news.rss",   # Tengrinews
+    "https://www.zakon.kz/rss.xml",               # Zakon.kz
+    "https://www.inform.kz/rss",                  # Inform.kz
+    "https://www.nur.kz/rss/",                    # Nur.kz
+    "https://kapital.kz/rss/",                    # Kapital.kz
+    "https://forbes.kz/rss",                      # Forbes.kz
+    "https://inbusiness.kz/ru/rss",               # Inbusiness.kz
+    "https://time.kz/rss",                        # Time.kz
+    "https://orda.kz/feed/",                      # Orda.kz (WordPress feed)
+    "https://www.lada.kz/rss.xml",                # Lada.kz
+    "https://ulysmedia.kz/rss/",                  # Ulysmedia.kz
+    "https://vlast.kz/rss",                       # Vlast.kz
+    "https://kursiv.media/feed/",                 # Kursiv.media (WordPress feed)
+    "https://kaztag.kz/rss",                      # KazTAG
+    "https://arbat.media/rss",                    # Arbat.media
 ]
 
 scraper = NewsScraper(rss_urls)
