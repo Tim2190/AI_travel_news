@@ -6,6 +6,20 @@ from typing import List, Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
+# --- НАСТРОЙКИ ФИЛЬТРАЦИИ ---
+# Список ключевых слов для отбора новостей (все в нижнем регистре).
+# Если заголовок содержит одно из этих слов, новость берем в обработку.
+TARGET_KEYWORDS = [
+    # Туризм и Авиа
+    "туризм", "путешестви", "авиа", "рейс", "курорт", "виза", "шенген", 
+    "отдых", "самолет", "границ", "отель", "flyarystan", "air astana", 
+    "поезд", "билет", "паспорт", "безвиз", "qazaq air", "scat",
+    # Экономика и Политика (для стиля "Сноб")
+    "тенге", "налог", "бюджет", "инвестиц", "токаев", "министр", 
+    "закон", "парламент", "казахстан", "правительств", "банк", 
+    "экспорт", "импорт", "ввп", "инфляци"
+]
+
 # Все источники — только прямой парсинг сайтов (без RSS).
 # Селекторы подобраны под типичную вёрстку; если сайт обновился — поправь под актуальный HTML.
 DIRECT_SCRAPE_SOURCES: List[Dict] = [
@@ -183,29 +197,52 @@ class NewsScraper:
         title_sel = config.get("title_selector")
         link_sel = config.get("link_selector", "a")
         base_url = config.get("base_url", "").rstrip("/")
+        
         if not url or not article_sel or not title_sel:
             logger.warning(f"Direct source '{name}' skipped: missing url/article_selector/title_selector")
             return []
+            
         news = []
         try:
             logger.info(f"Direct scraping {name}...")
             headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"}
             resp = requests.get(url, headers=headers, timeout=15)
             soup = BeautifulSoup(resp.content, "html.parser")
-            articles = soup.select(article_sel)[:3]  # жёсткий лимит: не более 3 с каждого ресурса
+            
+            # --- ИЗМЕНЕНИЕ: ЛИМИТ ДО 5 ---
+            articles = soup.select(article_sel)[:5] 
+            
             for art in articles:
                 title_el = art.select_one(title_sel)
                 link_el = art.select_one(link_sel) if link_sel else title_el
+                
                 if not title_el or not link_el:
                     continue
+                    
                 title = title_el.get_text(strip=True)
                 href = link_el.get("href", "")
+                
                 if not href:
                     continue
+                    
                 link = (base_url + href) if href.startswith("/") else href
                 if not link.startswith("http"):
                     link = base_url + "/" + link
+
+                # --- ИЗМЕНЕНИЕ: ФИЛЬТРАЦИЯ ПО КЛЮЧЕВЫМ СЛОВАМ ---
+                # Проверяем, подходит ли новость по теме, ДО того как скачивать полный текст.
+                # Если сайт профильный (Tourism/Travel), берем всё. Если общий — фильтруем.
+                is_specialized_source = "tourism" in url or "travel" in url
+                title_lower = title.lower()
+                has_keyword = any(k in title_lower for k in TARGET_KEYWORDS)
+
+                if not is_specialized_source and not has_keyword:
+                    # Пропускаем новость, если это не туризм и в заголовке нет нужных слов
+                    continue
+
+                # Если проверка пройдена, качаем полный текст
                 full_text, image_url, published_at = self._fetch_full_text_and_image(link)
+                
                 news.append({
                     "title": title,
                     "original_text": full_text or title,
