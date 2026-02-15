@@ -22,6 +22,7 @@ class NewsArchive(Base):
     rewritten_text = Column(Text, nullable=True)
     source_name = Column(String(255))
     source_url = Column(String(1000), unique=True)
+    source_published_at = Column(DateTime, nullable=True)  # дата/время публикации на сайте источника
     telegram_post_id = Column(String(100), nullable=True)
     image_url = Column(String(1000), nullable=True) # or image_prompt
     status = Column(String(20), default="draft")

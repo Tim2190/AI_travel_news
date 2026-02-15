@@ -1,7 +1,8 @@
 import requests
 from bs4 import BeautifulSoup
+from datetime import datetime, timedelta, timezone
 import logging
-from typing import List, Dict
+from typing import List, Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -204,19 +205,57 @@ class NewsScraper:
                 link = (base_url + href) if href.startswith("/") else href
                 if not link.startswith("http"):
                     link = base_url + "/" + link
-                full_text, image_url = self._fetch_full_text_and_image(link)
+                full_text, image_url, published_at = self._fetch_full_text_and_image(link)
                 news.append({
                     "title": title,
                     "original_text": full_text or title,
                     "source_name": name,
                     "source_url": link,
                     "image_url": image_url,
+                    "published_at": published_at,
                 })
         except Exception as e:
             logger.error(f"Error scraping {name}: {e}")
         return news
 
-    def _fetch_full_text_and_image(self, url: str):
+    def _extract_publish_date(self, soup: BeautifulSoup) -> Optional[datetime]:
+        """Извлекает дату/время публикации со страницы статьи."""
+        # Open Graph / Schema
+        for prop in ("article:published_time", "published_time", "date"):
+            meta = soup.find("meta", property=prop) or soup.find("meta", attrs={"name": prop})
+            if meta and meta.get("content"):
+                return self._parse_date(meta["content"])
+        # <time datetime="...">
+        time_el = soup.find("time", attrs={"datetime": True})
+        if time_el and time_el.get("datetime"):
+            return self._parse_date(time_el["datetime"])
+        # data-published, data-date
+        for attr in ("data-published", "data-date", "data-time"):
+            el = soup.find(attrs={attr: True})
+            if el and el.get(attr):
+                return self._parse_date(el[attr])
+        return None
+
+    def _parse_date(self, value: str) -> Optional[datetime]:
+        if not value or not value.strip():
+            return None
+        value = value.strip()[:25]  # ISO часто YYYY-MM-DDTHH:MM:SS+00:00
+        for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+            try:
+                if value.endswith("Z"):
+                    value = value[:-1] + "+00:00"
+                if "+" in value or value.count("-") >= 2:
+                    d = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                else:
+                    d = datetime.strptime(value[:10], "%Y-%m-%d")
+                if d.tzinfo:
+                    d = d.astimezone(timezone.utc).replace(tzinfo=None)
+                return d
+            except (ValueError, TypeError):
+                continue
+        return None
+
+    def _fetch_full_text_and_image(self, url: str) -> Tuple[Optional[str], Optional[str], Optional[datetime]]:
         try:
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
@@ -224,7 +263,7 @@ class NewsScraper:
             }
             response = requests.get(url, headers=headers, timeout=15)
             if response.status_code != 200:
-                return None, None
+                return None, None, None
             soup = BeautifulSoup(response.content, "html.parser")
             paragraphs = soup.find_all("p")
             text = "\n".join([p.get_text() for p in paragraphs if len(p.get_text()) > 50])
@@ -236,8 +275,9 @@ class NewsScraper:
                 img = soup.find("img")
                 if img and img.get("src"):
                     image_url = img.get("src")
-            return text, image_url
-        except:
-            return None, None
+            published_at = self._extract_publish_date(soup)
+            return text, image_url, published_at
+        except Exception:
+            return None, None, None
 
 scraper = NewsScraper()

@@ -1,12 +1,13 @@
 import asyncio
 import html
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from .database import SessionLocal, NewsArchive, NewsStatus
 from .scraper import scraper
 from .rewriter import rewriter
 from .publisher import publisher
+from .config import settings
 import requests
 
 logger = logging.getLogger(__name__)
@@ -23,6 +24,21 @@ async def scrape_news_task():
         if not new_items:
             logger.warning("No news found from any direct sources.")
             return
+
+        # Только актуальные: отбрасываем материалы старше NEWS_MAX_AGE_DAYS
+        cutoff = datetime.utcnow() - timedelta(days=settings.NEWS_MAX_AGE_DAYS)
+        def is_recent(item):
+            pub = item.get("published_at")
+            if pub is None:
+                return True  # дату не нашли — не отбрасываем
+            if getattr(pub, "tzinfo", None):
+                pub = pub.replace(tzinfo=None)  # к наивному для сравнения
+            return pub >= cutoff
+        new_items = [i for i in new_items if is_recent(i)]
+        if not new_items:
+            logger.warning("No recent news (all older than %s days).", settings.NEWS_MAX_AGE_DAYS)
+            return
+
         # ограничим максимум 30 новостями
         new_items = new_items[:30]
 
@@ -42,6 +58,7 @@ async def scrape_news_task():
 
         added_count = 0
         for item in top_items:
+            # Дубликаты: проверка по URL (один материал — один пост)
             exists = db.query(NewsArchive).filter(NewsArchive.source_url == item["source_url"]).first()
             if exists:
                 continue
@@ -50,6 +67,7 @@ async def scrape_news_task():
                 original_text=item["original_text"],
                 source_name=item["source_name"],
                 source_url=item["source_url"],
+                source_published_at=item.get("published_at"),
                 image_url=item["image_url"],
                 status=NewsStatus.draft.value
             )

@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     TELEGRAM_CHAT_ID: str
     SCRAPE_INTERVAL_MINUTES: int = 20
     PUBLISH_INTERVAL_MINUTES: int = 5
+    NEWS_MAX_AGE_DAYS: int = 7  # Не брать материалы старше N дней (только актуальные новости)
     
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
