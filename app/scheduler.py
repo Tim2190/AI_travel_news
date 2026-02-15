@@ -20,7 +20,7 @@ async def scrape_news_task():
         logger.info("Starting scraping cycle...")
         new_items = scraper.scrape()
         if not new_items:
-            logger.warning("No news found in any RSS sources.")
+            logger.warning("No news found from any direct sources.")
             return
         # ограничим максимум 30 новостями
         new_items = new_items[:30]

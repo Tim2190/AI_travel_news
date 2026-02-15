@@ -1,4 +1,3 @@
-import feedparser
 import requests
 from bs4 import BeautifulSoup
 import logging
@@ -6,9 +5,10 @@ from typing import List, Dict
 
 logger = logging.getLogger(__name__)
 
-# Источники БЕЗ RSS: мониторинг через прямой парсинг страницы (селекторы под свой сайт)
-# Добавляй сюда любые СМИ без RSS: укажи URL страницы со списком новостей и селекторы
+# Все источники — только прямой парсинг сайтов (без RSS).
+# Селекторы подобраны под типичную вёрстку; если сайт обновился — поправь под актуальный HTML.
 DIRECT_SCRAPE_SOURCES: List[Dict] = [
+    # Путешествия
     {
         "name": "TengriTravel",
         "url": "https://tengritravel.kz/",
@@ -25,34 +25,153 @@ DIRECT_SCRAPE_SOURCES: List[Dict] = [
         "link_selector": "a.main-news__title, a.news-list__title",
         "base_url": "https://kapital.kz",
     },
-    # Пример добавления другого СМИ без RSS (раскомментируй и подставь селекторы):
-    # {
-    #     "name": "Название СМИ",
-    #     "url": "https://example.com/news",
-    #     "article_selector": ".news-item",
-    #     "title_selector": "h2 a",
-    #     "link_selector": "h2 a",
-    #     "base_url": "https://example.com",
-    # },
+    # Tengrinews (главная)
+    {
+        "name": "Tengrinews",
+        "url": "https://tengrinews.kz/",
+        "article_selector": ".tn-main-news-item",
+        "title_selector": "a.tn-link",
+        "link_selector": "a.tn-link",
+        "base_url": "https://tengrinews.kz",
+    },
+    # Zakon.kz
+    {
+        "name": "Zakon.kz",
+        "url": "https://www.zakon.kz/",
+        "article_selector": ".block-news-item, .news-item, article",
+        "title_selector": "a",
+        "link_selector": "a",
+        "base_url": "https://www.zakon.kz",
+    },
+    # Inform.kz
+    {
+        "name": "Inform.kz",
+        "url": "https://www.inform.kz/ru",
+        "article_selector": ".article-item, .news-item, .item",
+        "title_selector": "a, .title a",
+        "link_selector": "a",
+        "base_url": "https://www.inform.kz",
+    },
+    # Nur.kz
+    {
+        "name": "Nur.kz",
+        "url": "https://www.nur.kz/",
+        "article_selector": "article, .article-card, .news-item",
+        "title_selector": "a[href*='/news/'], .title a, h2 a",
+        "link_selector": "a",
+        "base_url": "https://www.nur.kz",
+    },
+    # Kapital.kz (главная)
+    {
+        "name": "Kapital.kz",
+        "url": "https://kapital.kz/",
+        "article_selector": ".main-news__item, .news-list__item",
+        "title_selector": "a.main-news__title, a.news-list__title",
+        "link_selector": "a.main-news__title, a.news-list__title",
+        "base_url": "https://kapital.kz",
+    },
+    # Forbes.kz
+    {
+        "name": "Forbes.kz",
+        "url": "https://forbes.kz/",
+        "article_selector": ".article-item, article, .news-item",
+        "title_selector": "a, h2 a, .title a",
+        "link_selector": "a",
+        "base_url": "https://forbes.kz",
+    },
+    # Inbusiness.kz
+    {
+        "name": "Inbusiness.kz",
+        "url": "https://inbusiness.kz/ru",
+        "article_selector": ".news-item, article, .item",
+        "title_selector": "a, .title a",
+        "link_selector": "a",
+        "base_url": "https://inbusiness.kz",
+    },
+    # Time.kz
+    {
+        "name": "Time.kz",
+        "url": "https://time.kz/",
+        "article_selector": ".news-item, article, .item",
+        "title_selector": "a, h2 a",
+        "link_selector": "a",
+        "base_url": "https://time.kz",
+    },
+    # Orda.kz
+    {
+        "name": "Orda.kz",
+        "url": "https://orda.kz/",
+        "article_selector": ".post, article, .news-item",
+        "title_selector": "a, .entry-title a, h2 a",
+        "link_selector": "a",
+        "base_url": "https://orda.kz",
+    },
+    # Lada.kz
+    {
+        "name": "Lada.kz",
+        "url": "https://www.lada.kz/",
+        "article_selector": ".news-item, article, .item",
+        "title_selector": "a, .title a",
+        "link_selector": "a",
+        "base_url": "https://www.lada.kz",
+    },
+    # Ulysmedia.kz
+    {
+        "name": "Ulysmedia.kz",
+        "url": "https://ulysmedia.kz/",
+        "article_selector": ".news-item, article",
+        "title_selector": "a, h2 a",
+        "link_selector": "a",
+        "base_url": "https://ulysmedia.kz",
+    },
+    # Vlast.kz
+    {
+        "name": "Vlast.kz",
+        "url": "https://vlast.kz/",
+        "article_selector": ".article-item, article, .news-item",
+        "title_selector": "a, .title a",
+        "link_selector": "a",
+        "base_url": "https://vlast.kz",
+    },
+    # Kursiv.media
+    {
+        "name": "Kursiv.media",
+        "url": "https://kursiv.media/news",
+        "article_selector": ".article-item, article, .news-item",
+        "title_selector": "a, h2 a",
+        "link_selector": "a",
+        "base_url": "https://kursiv.media",
+    },
+    # KazTAG
+    {
+        "name": "KazTAG",
+        "url": "https://kaztag.kz/ru",
+        "article_selector": ".news-item, article, .item",
+        "title_selector": "a, .title a",
+        "link_selector": "a",
+        "base_url": "https://kaztag.kz",
+    },
+    # Arbat.media
+    {
+        "name": "Arbat.media",
+        "url": "https://arbat.media/",
+        "article_selector": ".news-item, article, .post",
+        "title_selector": "a, h2 a",
+        "link_selector": "a",
+        "base_url": "https://arbat.media",
+    },
 ]
 
 
 class NewsScraper:
-    def __init__(self, rss_urls: List[str], direct_sources: List[Dict] = None):
-        self.rss_urls = rss_urls
+    def __init__(self, direct_sources: List[Dict] = None):
         self.direct_sources = direct_sources or DIRECT_SCRAPE_SOURCES
 
     def scrape(self) -> List[Dict]:
         all_news = []
-
-        # 1. Прямой скрапинг СМИ без RSS (конфигурируемый список)
         for source in self.direct_sources:
             all_news.extend(self._scrape_direct_source(source))
-
-        # 2. RSS-источники
-        all_news.extend(self._scrape_rss())
-
-        logger.info(f"Total news gathered from all sources: {len(all_news)}")
+        logger.info(f"Total news gathered from direct sources: {len(all_news)}")
         return all_news
 
     def _scrape_direct_source(self, config: Dict) -> List[Dict]:
@@ -97,62 +216,6 @@ class NewsScraper:
             logger.error(f"Error scraping {name}: {e}")
         return news
 
-    def _scrape_rss(self) -> List[Dict]:
-        rss_news = []
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-        }
-        for url in self.rss_urls:
-            try:
-                logger.info(f"Checking RSS source: {url}")
-                resp = requests.get(url, headers=headers, timeout=15)
-                if resp.status_code != 200: continue
-                
-                feed = feedparser.parse(resp.content)
-                for entry in feed.entries[:5]:
-                    link = entry.get("link", "").strip()
-                    if not link: continue
-                    
-                    full_text = self._fetch_full_text(link)
-                    rss_news.append({
-                        "title": entry.get("title", "").strip(),
-                        "original_text": full_text or entry.get("summary", ""),
-                        "source_name": feed.feed.get("title", "World News"),
-                        "source_url": link,
-                        "image_url": self._extract_image(entry)
-                    })
-            except Exception as e:
-                logger.error(f"Error RSS {url}: {e}")
-        return rss_news
-
-    def _extract_image(self, entry) -> str:
-        # Try to find image in enclosures or media content
-        if "enclosures" in entry:
-            for enc in entry.enclosures:
-                if enc.get("type", "").startswith("image"):
-                    return enc.get("href")
-        if "media_content" in entry:
-            for media in entry.media_content:
-                if media.get("medium") == "image":
-                    return media.get("url")
-        return None
-
-    def _fetch_full_text(self, url: str) -> str:
-        try:
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-            }
-            response = requests.get(url, headers=headers, timeout=15)
-            if response.status_code != 200:
-                return None
-            soup = BeautifulSoup(response.content, "html.parser")
-            paragraphs = soup.find_all("p")
-            return "\n".join([p.get_text() for p in paragraphs if len(p.get_text()) > 50])
-        except:
-            return None
-
     def _fetch_full_text_and_image(self, url: str):
         try:
             headers = {
@@ -177,23 +240,4 @@ class NewsScraper:
         except:
             return None, None
 
-# Казахстан и СНГ (русскоязычные/региональные источники)
-rss_urls: List[str] = [
-    "https://tengrinews.kz/kazakhstan_news.rss",   # Tengrinews
-    "https://www.zakon.kz/rss.xml",               # Zakon.kz
-    "https://www.inform.kz/rss",                  # Inform.kz
-    "https://www.nur.kz/rss/",                    # Nur.kz
-    "https://kapital.kz/rss/",                    # Kapital.kz
-    "https://forbes.kz/rss",                      # Forbes.kz
-    "https://inbusiness.kz/ru/rss",               # Inbusiness.kz
-    "https://time.kz/rss",                        # Time.kz
-    "https://orda.kz/feed/",                      # Orda.kz (WordPress feed)
-    "https://www.lada.kz/rss.xml",                # Lada.kz
-    "https://ulysmedia.kz/rss/",                  # Ulysmedia.kz
-    "https://vlast.kz/rss",                       # Vlast.kz
-    "https://kursiv.media/feed/",                 # Kursiv.media (WordPress feed)
-    "https://kaztag.kz/rss",                      # KazTAG
-    "https://arbat.media/rss",                    # Arbat.media
-]
-
-scraper = NewsScraper(rss_urls)
+scraper = NewsScraper()

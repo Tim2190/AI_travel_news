@@ -4,7 +4,6 @@ sqlalchemy==2.0.31
 psycopg2-binary==2.9.10
 huggingface_hub>=0.24.0
 python-telegram-bot==21.3
-feedparser==6.0.11
 beautifulsoup4==4.12.3
 requests==2.32.3
 python-dotenv==1.0.1
