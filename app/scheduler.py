@@ -1,6 +1,7 @@
 import asyncio
 import html
 import logging
+import re
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from .database import SessionLocal, NewsArchive, NewsStatus
@@ -25,6 +26,20 @@ async def scrape_news_task():
             logger.warning("No news found from any direct sources.")
             return
 
+        # Только по заданной тематике: заголовок или текст содержат хотя бы одно ключевое слово
+        topic_keywords = [k.strip().lower() for k in settings.TOPIC_KEYWORDS.split(",") if k.strip()]
+        def matches_topic(item):
+            if not topic_keywords:
+                return True
+            title = (item.get("title") or "").lower()
+            text = (item.get("original_text") or "").lower()
+            combined = f"{title} {text}"
+            return any(kw in combined for kw in topic_keywords)
+        new_items = [i for i in new_items if matches_topic(i)]
+        if not new_items:
+            logger.warning("No news matching topic keywords.")
+            return
+
         # Только актуальные: отбрасываем материалы старше NEWS_MAX_AGE_DAYS
         cutoff = datetime.utcnow() - timedelta(days=settings.NEWS_MAX_AGE_DAYS)
         def is_recent(item):
@@ -42,6 +57,11 @@ async def scrape_news_task():
         # ограничим максимум 30 новостями
         new_items = new_items[:30]
 
+        def normalize_title(title):
+            if not title:
+                return ""
+            return re.sub(r"\s+", " ", title.strip().lower())[:500]
+
         # простое скорингование: по длине текста и наличию ключевых слов
         def score(item):
             text = (item.get("original_text") or "").lower()
@@ -58,12 +78,16 @@ async def scrape_news_task():
 
         added_count = 0
         for item in top_items:
-            # Дубликаты: проверка по URL (один материал — один пост)
-            exists = db.query(NewsArchive).filter(NewsArchive.source_url == item["source_url"]).first()
-            if exists:
+            # Дубликаты: по URL и по нормализованному заголовку (один инфоповод — один пост)
+            url_exists = db.query(NewsArchive).filter(NewsArchive.source_url == item["source_url"]).first()
+            if url_exists:
+                continue
+            norm = normalize_title(item["title"])
+            if norm and db.query(NewsArchive).filter(NewsArchive.normalized_title == norm).first():
                 continue
             news_entry = NewsArchive(
                 title=item["title"],
+                normalized_title=norm or None,
                 original_text=item["original_text"],
                 source_name=item["source_name"],
                 source_url=item["source_url"],

@@ -18,6 +18,7 @@ class NewsArchive(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String(500))
+    normalized_title = Column(String(500), index=True, nullable=True)  # для проверки дубликатов по заголовку
     original_text = Column(Text)
     rewritten_text = Column(Text, nullable=True)
     source_name = Column(String(255))

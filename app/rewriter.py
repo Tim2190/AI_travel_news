@@ -1,3 +1,4 @@
+import asyncio
 import re
 import logging
 from groq import Groq
@@ -108,6 +109,11 @@ class ContentRewriter:
             )
             result = response.choices[0].message.content.strip()
             logger.info(f"{role} завершил работу. Длина текста: {len(result)}")
+            # Пауза между запросами к Groq, чтобы не превысить TPM (лимит токенов в минуту)
+            delay = getattr(settings, "GROQ_DELAY_SECONDS", 20)
+            if delay > 0:
+                logger.info(f"Пауза {delay} с перед следующим запросом к Groq...")
+                await asyncio.sleep(delay)
             return result
         except Exception as e:
             logger.error(f"Ошибка на этапе {role}: {str(e)}")

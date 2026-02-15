@@ -192,7 +192,7 @@ class NewsScraper:
             headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"}
             resp = requests.get(url, headers=headers, timeout=15)
             soup = BeautifulSoup(resp.content, "html.parser")
-            articles = soup.select(article_sel)[:5]
+            articles = soup.select(article_sel)[:3]  # жёсткий лимит: не более 3 с каждого ресурса
             for art in articles:
                 title_el = art.select_one(title_sel)
                 link_el = art.select_one(link_sel) if link_sel else title_el
