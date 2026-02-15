@@ -10,43 +10,73 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-async def process_news_task():
+async def scrape_news_task():
     """
-    Main background task to scrape, rewrite and publish news.
+    Scrape news, select up to 5 best items and store as drafts.
+    Runs every SCRAPE_INTERVAL_MINUTES.
     """
     db = SessionLocal()
     try:
-        logger.info("Starting news processing cycle...")
-        
-        # 1. Scrape new items
+        logger.info("Starting scraping cycle...")
         new_items = scraper.scrape()
         if not new_items:
             logger.warning("No news found in any RSS sources.")
             return
+        # ограничим максимум 30 новостями
+        new_items = new_items[:30]
+
+        # простое скорингование: по длине текста и наличию ключевых слов
+        def score(item):
+            text = (item.get("original_text") or "").lower()
+            title = (item.get("title") or "").lower()
+            base = min(len(text) / 500, 3)  # до 3 баллов за объем
+            keywords = ["экономика", "финансы", "банк", "инфляция", "рынок", "валюта", "инвестиции"]
+            kw_score = sum(1 for k in keywords if k in text or k in title)
+            region_keywords = ["казахстан", "россия", "узбекистан", "снг", "алматы", "астана", "москва", "ташкент"]
+            region_score = sum(1 for k in region_keywords if k in text or k in title)
+            return base + kw_score + region_score
+
+        scored = sorted(new_items, key=score, reverse=True)
+        top_items = scored[:5]
 
         added_count = 0
-        for item in new_items:
-            # Check if already exists
+        for item in top_items:
             exists = db.query(NewsArchive).filter(NewsArchive.source_url == item["source_url"]).first()
-            if not exists:
-                news_entry = NewsArchive(
-                    title=item["title"],
-                    original_text=item["original_text"],
-                    source_name=item["source_name"],
-                    source_url=item["source_url"],
-                    image_url=item["image_url"],
-                    status=NewsStatus.draft.value
-                )
-                db.add(news_entry)
-                added_count += 1
-        
-        db.commit()
-        logger.info(f"Successfully added {added_count} new unique news items to database.")
+            if exists:
+                continue
+            news_entry = NewsArchive(
+                title=item["title"],
+                original_text=item["original_text"],
+                source_name=item["source_name"],
+                source_url=item["source_url"],
+                image_url=item["image_url"],
+                status=NewsStatus.draft.value
+            )
+            db.add(news_entry)
+            added_count += 1
 
-        # 2. Process only one draft per cycle (ensures 1 news every interval)
+        db.commit()
+        logger.info(f"Successfully added {added_count} prioritized news items to database.")
+    except Exception as e:
+        logger.error(f"Error in scrape_news_task: {str(e)}")
+    finally:
+        db.close()
+        logger.info("Scraping cycle finished.")
+
+
+async def process_news_task():
+    """
+    Process one draft: rewrite and publish.
+    Runs every PUBLISH_INTERVAL_MINUTES.
+    """
+    db = SessionLocal()
+    try:
+        logger.info("Starting news processing cycle...")
+
+        # 1. Process only one draft per cycle (ensures 1 news every interval)
         draft = (
             db.query(NewsArchive)
-            .filter(NewsArchive.status == NewsStatus.draft.value)
+            .filter(NewsArchive.status == NewsStatus.draft.value, NewsArchive.telegram_post_id == None)
             .order_by(NewsArchive.created_at.asc())
             .first()
         )
@@ -96,7 +126,8 @@ def start_scheduler():
     from .config import settings
 
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(process_news_task, 'interval', minutes=settings.SCRAPE_INTERVAL_MINUTES)
+    scheduler.add_job(scrape_news_task, 'interval', minutes=settings.SCRAPE_INTERVAL_MINUTES)
+    scheduler.add_job(process_news_task, 'interval', minutes=settings.PUBLISH_INTERVAL_MINUTES)
     # Keepalive ping to prevent sleep
     def ping_self():
         try:

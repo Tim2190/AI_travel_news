@@ -8,7 +8,8 @@ class Settings(BaseSettings):
     HF_MODEL_EDITOR: str = "meta-llama/Llama-3.1-8B-Instruct"
     TELEGRAM_BOT_TOKEN: str
     TELEGRAM_CHAT_ID: str
-    SCRAPE_INTERVAL_MINUTES: int = 5
+    SCRAPE_INTERVAL_MINUTES: int = 20
+    PUBLISH_INTERVAL_MINUTES: int = 5
     
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

@@ -41,6 +41,22 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 def init_db():
     Base.metadata.create_all(bind=engine)
 
+def cleanup_old_tourism_news():
+    db = SessionLocal()
+    try:
+        old_sources = [
+            "TengriTravel",
+            "Kapital Tourism",
+            "Skift",
+            "TravelPulse",
+            "Travel Weekly",
+            "Euronews Travel",
+        ]
+        deleted = db.query(NewsArchive).filter(NewsArchive.source_name.in_(old_sources)).delete(synchronize_session=False)
+        db.commit()
+    finally:
+        db.close()
+
 def get_db():
     db = SessionLocal()
     try:

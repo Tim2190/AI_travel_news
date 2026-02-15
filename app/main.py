@@ -1,6 +1,6 @@
 import logging
 from fastapi import FastAPI, BackgroundTasks
-from .database import init_db
+from .database import init_db, cleanup_old_tourism_news
 from .scheduler import start_scheduler, process_news_task
 from .config import settings
 
@@ -17,6 +17,8 @@ app = FastAPI(title="AI Travel News Editorial System")
 async def startup_event():
     logger.info("Initializing database...")
     init_db()
+    logger.info("Cleaning up old tourism news...")
+    cleanup_old_tourism_news()
     logger.info("Starting scheduler...")
     start_scheduler()
 
