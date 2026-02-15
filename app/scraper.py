@@ -41,13 +41,13 @@ class NewsScraper:
                     title = title_tag.get_text(strip=True)
                     link = "https://tengritravel.kz" + link_tag["href"] if not link_tag["href"].startswith("http") else link_tag["href"]
                     
-                    full_text = self._fetch_full_text(link)
+                    full_text, image_url = self._fetch_full_text_and_image(link)
                     news.append({
                         "title": title,
                         "original_text": full_text or title,
                         "source_name": "TengriTravel",
                         "source_url": link,
-                        "image_url": None # Можно добавить логику поиска картинки
+                        "image_url": image_url
                     })
         except Exception as e:
             logger.error(f"Error scraping TengriTravel: {e}")
@@ -69,13 +69,13 @@ class NewsScraper:
                     title = title_tag.get_text(strip=True)
                     link = "https://kapital.kz" + title_tag["href"] if not title_tag["href"].startswith("http") else title_tag["href"]
                     
-                    full_text = self._fetch_full_text(link)
+                    full_text, image_url = self._fetch_full_text_and_image(link)
                     news.append({
                         "title": title,
                         "original_text": full_text or title,
                         "source_name": "Kapital Tourism",
                         "source_url": link,
-                        "image_url": None
+                        "image_url": image_url
                     })
         except Exception as e:
             logger.error(f"Error scraping Kapital: {e}")
@@ -132,12 +132,34 @@ class NewsScraper:
             if response.status_code != 200:
                 return None
             soup = BeautifulSoup(response.content, "html.parser")
-            # Basic logic: get all paragraphs from article/main content
-            # This is highly dependent on the source site structure
             paragraphs = soup.find_all("p")
             return "\n".join([p.get_text() for p in paragraphs if len(p.get_text()) > 50])
         except:
             return None
+
+    def _fetch_full_text_and_image(self, url: str):
+        try:
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+            }
+            response = requests.get(url, headers=headers, timeout=15)
+            if response.status_code != 200:
+                return None, None
+            soup = BeautifulSoup(response.content, "html.parser")
+            paragraphs = soup.find_all("p")
+            text = "\n".join([p.get_text() for p in paragraphs if len(p.get_text()) > 50])
+            image_url = None
+            og = soup.find("meta", property="og:image")
+            if og and og.get("content"):
+                image_url = og.get("content")
+            if not image_url:
+                img = soup.find("img")
+                if img and img.get("src"):
+                    image_url = img.get("src")
+            return text, image_url
+        except:
+            return None, None
 
 # Казахстан и СНГ (русскоязычные/региональные источники)
 rss_urls: List[str] = [

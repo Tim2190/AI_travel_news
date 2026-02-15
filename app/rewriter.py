@@ -13,8 +13,8 @@ class ContentRewriter:
     async def rewrite(self, text: str) -> str:
         """
         Многоступенчатая обработка: Журналист -> Редактор -> Главред.
-        """
-        journalist_prompt = f"""Вы — профессиональный журналист туристического медиа.
+                """
+        journalist_prompt = f"""Вы — профессиональный журналист экономического медиа.
 ЗАДАЧА: Переведите и переработайте источник в качественную новость на русском языке, готовую к публикации.
 
 STRICT RULES:
@@ -23,7 +23,8 @@ STRICT RULES:
 3) Не добавляйте факты: работайте только с тем, что есть в источнике.
 4) Один пост = одна конкретная новость. Не смешивайте разные темы.
 5) Формат для Telegram: один цепляющий заголовок, 3–5 коротких абзацев, 2–3 релевантных эмодзи.
-6) Выведите ТОЛЬКО финальный текст новости на русском. Без рассуждений и служебных пометок.
+6) Не используйте разметку Markdown (#, ##, ###). Пишите обычный текст без служебных символов.
+7) Выведите ТОЛЬКО финальный текст новости на русском. Без рассуждений и служебных пометок.
 
 Source:
 {text}"""
@@ -114,15 +115,25 @@ Text:
         return end not in [".", "!", "?", "…", "»", "”"]
 
     def _sanitize_published_text(self, text: str) -> str:
-        # Удаление возможных служебных маркеров, если модель их вернула
         stripped = text.strip()
         upper = stripped.upper()
         if upper in ["APPROVE", "REJECT", "ACCEPT", "OK"]:
             return ""
-        # Фильтрация очевидных служебных префиксов/суффиксов
         for token in ["APPROVE", "REJECT", "ACCEPT"]:
             stripped = stripped.replace(token, "")
-        return stripped.strip()
+        lines = stripped.splitlines()
+        cleaned_lines = []
+        for line in lines:
+            l = line.lstrip()
+            if l.startswith("### "):
+                cleaned_lines.append(l[4:])
+            elif l.startswith("## "):
+                cleaned_lines.append(l[3:])
+            elif l.startswith("# "):
+                cleaned_lines.append(l[2:])
+            else:
+                cleaned_lines.append(line)
+        return "\n".join(x.strip() for x in cleaned_lines).strip()
 
 rewriter = ContentRewriter(
     api_key=settings.HF_API_KEY, 
