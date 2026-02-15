@@ -74,12 +74,15 @@ async def process_news_task():
         logger.info("Starting news processing cycle...")
 
         # 1. Process only one draft per cycle (ensures 1 news every interval)
-        draft = (
+        draft_query = (
             db.query(NewsArchive)
             .filter(NewsArchive.status == NewsStatus.draft.value, NewsArchive.telegram_post_id == None)
             .order_by(NewsArchive.created_at.asc())
-            .first()
         )
+        try:
+            draft = draft_query.with_for_update(skip_locked=True).first()
+        except Exception:
+            draft = draft_query.first()
         if not draft:
             logger.info("No drafts to process at this time.")
             return
@@ -102,7 +105,8 @@ async def process_news_task():
             
             # PUBLISH STAGE
             logger.info(f"Publishing to Telegram: {draft.title}")
-            post_id = await publisher.publish(draft.rewritten_text, draft.image_url)
+            final_text = f"{draft.rewritten_text}\n\n<i>Источник: {draft.source_name}</i>"
+            post_id = await publisher.publish(final_text, draft.image_url)
             
             draft.telegram_post_id = str(post_id)
             draft.status = NewsStatus.published.value
