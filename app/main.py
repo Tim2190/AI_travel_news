@@ -2,9 +2,9 @@ import asyncio
 import logging
 import os
 from fastapi import FastAPI, BackgroundTasks
-from .database import init_db, cleanup_old_tourism_news
+from sqlalchemy import text
+from .database import init_db, cleanup_old_tourism_news, engine
 from .scheduler import start_scheduler, process_news_task, scrape_news_task
-from .config import settings
 
 # Setup logging
 logging.basicConfig(
@@ -13,7 +13,24 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Один фиксированный ID блокировки: только один процесс в кластере запускает планировщик
+SCHEDULER_LOCK_ID = 0x0A7C9F26
+
 app = FastAPI(title="AI Travel News Editorial System")
+
+def _try_acquire_scheduler_lock():
+    """Пытается захватить advisory lock в PostgreSQL. Возвращает (connection или None, получили_ли_лок)."""
+    try:
+        conn = engine.connect()
+        row = conn.execute(text("SELECT pg_try_advisory_lock(:id)"), {"id": SCHEDULER_LOCK_ID})
+        got = row.scalar()
+        if got:
+            return conn, True
+        conn.close()
+        return None, False
+    except Exception as e:
+        logger.warning("Advisory lock not available (e.g. not PostgreSQL): %s. Scheduler will run in this process.", e)
+        return None, True  # не PostgreSQL — запускаем планировщик как раньше
 
 @app.on_event("startup")
 async def startup_event():
@@ -21,11 +38,27 @@ async def startup_event():
     init_db()
     logger.info("Cleaning up old tourism news...")
     cleanup_old_tourism_news()
-    logger.info("Starting scheduler...")
-    start_scheduler()
-    # Запуск скрапера сразу при старте (иначе первый раз только через SCRAPE_INTERVAL_MINUTES)
-    asyncio.create_task(scrape_news_task())
-    logger.info("Initial scrape task scheduled (run once at startup).")
+
+    # Запускаем планировщик и начальный скрап только в одном процессе (избегаем race condition при 2+ воркерах)
+    lock_conn, is_leader = _try_acquire_scheduler_lock()
+    if lock_conn is not None:
+        app.state.scheduler_lock_connection = lock_conn  # держим соединение, чтобы не отпустить lock
+    if is_leader:
+        logger.info("This process is scheduler leader. Starting scheduler...")
+        start_scheduler()
+        asyncio.create_task(scrape_news_task())
+        logger.info("Initial scrape task scheduled (run once at startup).")
+    else:
+        logger.info("Scheduler skipped: another process holds the lock (single scheduler in cluster).")
+
+@app.on_event("shutdown")
+def shutdown_event():
+    if getattr(app.state, "scheduler_lock_connection", None) is not None:
+        try:
+            app.state.scheduler_lock_connection.close()
+        except Exception:
+            pass
+        app.state.scheduler_lock_connection = None
 
 @app.get("/")
 async def root():

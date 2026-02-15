@@ -1,10 +1,13 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime, Enum
+from sqlalchemy import Column, Integer, String, Text, DateTime, Enum, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine
 import datetime
 import enum
+import logging
 from .config import settings
+
+_log = logging.getLogger(__name__)
 
 Base = declarative_base()
 
@@ -40,8 +43,34 @@ engine = create_engine(
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
+def ensure_migrations():
+    """Добавляет колонки, которых нет в уже существующей таблице (например после деплоя на Koyeb)."""
+    with engine.connect() as conn:
+        try:
+            # PostgreSQL: добавить колонку normalized_title, если её нет
+            conn.execute(text("""
+                ALTER TABLE news_archive
+                ADD COLUMN IF NOT EXISTS normalized_title VARCHAR(500)
+            """))
+            conn.commit()
+            _log.info("Migration: normalized_title column ensured.")
+        except Exception as e:
+            conn.rollback()
+            # Может не быть прав ALTER или это не PostgreSQL — не падаем
+            _log.warning("Migration normalized_title skipped (already exists or not supported): %s", e)
+        try:
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS ix_news_archive_normalized_title
+                ON news_archive(normalized_title)
+            """))
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            _log.warning("Migration index normalized_title skipped: %s", e)
+
 def init_db():
     Base.metadata.create_all(bind=engine)
+    ensure_migrations()
 
 def cleanup_old_tourism_news():
     db = SessionLocal()
