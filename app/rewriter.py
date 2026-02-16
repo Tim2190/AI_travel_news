@@ -6,27 +6,19 @@ from .config import settings
 
 logger = logging.getLogger(__name__)
 
-# Строгий словарь соответствий: месяцы и базовые термины — только казахские эквиваленты
+# --- СЛОВАРИ И ПРАВИЛА ---
+# Словари оставляем, они важны для чистоты языка
 KAZAQ_MONTHS = (
-    "қаңтар (январь), ақпан (февраль), наурыз (март), сәуір (апрель), мамыр (май), маусым (июнь), "
-    "шілде (июль), тамыз (август), қыркүйек (сентябрь), қазан (октябрь), қараша (ноябрь), желтоқсан (декабрь). "
-    "Тек осы атауларды қолдан; орыс/ағылшын ай атауларын ЖОҚ."
+    "қаңтар, ақпан, наурыз, сәуір, мамыр, маусым, шілде, тамыз, қыркүйек, қазан, қараша, желтоқсан. "
+    "Используй ТОЛЬКО эти названия. Никаких 'февраль' или 'February'."
 )
-KAZAQ_TERMS = (
-    "particularly / в частности → әсіресе, тек; however / однако → алайда, бірақ; according to → дереккөз бойынша, ...деп; "
-    "for example → мысалы; that is / то есть → яғни; in general → жалпы алғанда; as well as → сондай-ақ, тағы да; "
-    "important → маңызды; new / новое → жаңа; report → есеп, хабарлама; official → ресми; percent → пайыз; "
-    "million → миллион (сан ретінде рұқсат), басқа шет тілі сөздерін қазақша ауыстыр."
-)
-# Жёсткое правило языковой чистоты для системного промпта и этапов
-LANGUAGE_PURITY_RULE = (
-    "ТІЛ ТАЗАЛЫҒЫ (міндетті): Мәтін ТЕК таза қазақ тілінде. Ағылшын, орыс сөздері мен гибридтер (particularly, однако, "
-    "в частности, т.б.) ТЫЙЫМ САЛЫНҒАН. Барлық мағынаны қазақ сөздерімен бер; керек болса сөздікті қолдан."
-)
-# Требование проверки грамматики
-GRAMMAR_RULE = (
-    "ГРАММАТИКА: Финальный мәтінді міндетті тексер — жақтар, септік жалғаулары (ның, нің, ды, ді, ты, ті, да, де, та, те, ға, ге, на, не, т.б.), "
-    "көптік, сөйлем құрылымы қазақ грамматикасына сәйкес болуы керек. Қате жалғауларды түзет."
+
+# Правила чистоты (инструкция на русском для модели)
+LANGUAGE_RULES = (
+    "ЯЗЫК: Текст должен быть на ЧИСТЕЙШЕМ КАЗАХСКОМ ЯЗЫКЕ. "
+    "Строгий запрет на русизмы и англицизмы (никаких 'particularly', 'однако', 'в частности'). "
+    "Используй: 'әсіресе' вместо 'particularly', 'алайда' вместо 'однако/however'. "
+    "Грамматика: Проверяй падежные окончания (септік жалғаулары) и гармонию гласных."
 )
 
 class ContentRewriter:
@@ -34,160 +26,155 @@ class ContentRewriter:
         self.client = Groq(api_key=api_key)
         self.model = model
 
+    def smart_truncate(self, text: str, max_length: int = 950) -> str:
+        """Обрезает текст до лимита, сохраняя целостность предложений."""
+        if len(text) <= max_length:
+            return text
+        
+        # Обрезаем жестко
+        truncated = text[:max_length]
+        
+        # Ищем последние знаки препинания, чтобы не оборвать на полуслове
+        # Приоритет: точка, восклицательный, вопросительный, кавычка
+        last_sentence_end = -1
+        for char in ['.', '!', '?', '»', '"']:
+            pos = truncated.rfind(char)
+            if pos > last_sentence_end:
+                last_sentence_end = pos
+        
+        if last_sentence_end != -1:
+            return truncated[:last_sentence_end+1]
+        
+        # Если знаков нет, ищем хотя бы пробел
+        last_space = truncated.rfind(' ')
+        if last_space != -1:
+            return truncated[:last_space] + "..."
+            
+        return truncated
+
     async def rewrite(self, text: str) -> str:
         """
-        Многоступенчатая обработка: Журналист -> Редактор -> Главред.
-                """
-        journalist_prompt = f"""Сен — «СНОБ» журналы стилінде жазатын автор: ойлы, контексті бар, сенімді дауысы бар. Тілі — ТЕК таза қазақ.
-МІНДЕТ: Дереккөзді қайта жазуды емес, оны түсіндіруді, «неге маңызды» деп сұрауды мақсат ет. Подача — журнал колонкасы сияқты: көзқарас бар, контекст бар, жеңіл ирония мүмкін, бірақ фактілер өзгермейді.
-
-{LANGUAGE_PURITY_RULE}
-Ай атаулары (строго): {KAZAQ_MONTHS}
-Негізгі терминдер: {KAZAQ_TERMS}
-
-ПОДАЧА (СНОБ стилі):
-1) Аноним бюллетень емес — автордың дауысы: «біз көрдік», «қызығы», «нақты айтқанда» сияқты түсініктемелер рұқсат, бірақ шамалы.
-2) Тек «не болды» емес — «не білдіреді»: қысқа контекст, салдар немесе неге бұл жаңалық. Көлемі үлкен емес, бір-екі сөйлем.
-3) Жеңіл ирония, ақылды юмор — рұқсат; мат, қорлау, ашық саяси тарап — жоқ. Аудитория — ойлайтын, білімді оқырман.
-4) Тек қазақ сөздері; ағылшын/орыс/гибрид ЖОҚ. Грамматика дұрыс (жақ, септік жалғаулары). Стиль — журналдық: тілдік деңгей жоғары, бірақ түсінікті.
-
-МАҒЫНА:
-1) География мен фактілер дереккөздегідей. Ойдан факті қоспа.
-2) Бір пост = бір тақырып. Подачаны өзгерт, мазмұнды емес.
-
-ФОРМАТ:
-1) Тақырып — HTML: <b>тақырып</b> бір жолда. ** ҚОЛДАНБА.
-2) 3–5 абзац, әрқайсысы 1–3 сөйлем. Абзацтар арасында 3–5 эмодзи.
-3) Соңына 2–3 хэштег (тақырыпқа сәйкес).
-4) ҰЗЫНДЫҚ: барлық мәтін строго 950 таңбадан кем. Total length must be strictly under 950 characters.
-5) Шығарманың соңында тек постың мәтінін бер, түсініктеме жоқ.
-
-ДЕРЕККӨЗ:
-{text}"""
-        draft = await self._call_ai("Журналист", journalist_prompt)
+        Пайплайн: Журналист (Креатив) -> Редактор (Фильтр) -> Полировщик (Стиль + Лимит).
+        """
+        
+        # 1. ЖУРНАЛИСТ: Пишет креативно, в стиле Сноб
+        journalist_system = (
+            "Ты — колумнист интеллектуального журнала в стиле 'Сноб' или 'Esquire'. "
+            "Твоя задача: написать короткую заметку на основе новости. "
+            "СТИЛЬ: Ироничный, умный, с контекстом. Не просто 'что случилось', а 'что это значит'. "
+            "ЯЗЫК: ТОЛЬКО КАЗАХСКИЙ. "
+            f"{LANGUAGE_RULES} "
+            f"Месяцы: {KAZAQ_MONTHS}"
+        )
+        
+        journalist_user = f"""
+        Напиши заметку на основе этого текста.
+        
+        ТРЕБОВАНИЯ К ФОРМАТУ:
+        1. Заголовок: Выдели тегом <b>Заголовок</b> (на казахском).
+        2. Объем: СТРОГО до 850 символов (это критично для Telegram). Пиши кратко, без воды.
+        3. Структура: 2-3 абзаца. 
+        4. Подача: Добавь легкую иронию или аналитический комментарий в конце.
+        5. Хэштеги: 2-3 штуки в конце.
+        
+        ИСХОДНЫЙ ТЕКСТ:
+        {text}
+        """
+        
+        draft = await self._call_ai("Журналист", journalist_system, journalist_user)
+        if not draft: return None
         draft = draft.strip()
         
-        editor_prompt = f"""Сен экономикалық медиа редакторысың. Мәтінді жаңалық құндылығы, сапасы және фактілердің дұрыстығы бойынша бағала.
-
-ЕРЕЖЕ:
-1) Мәтін сапасыз, маңызсыз немесе фактілерді бұрмаласа — жауап тек: REJECT
-2) Мәтін сапалы және фактілерге сәйкес келсе — жауап тек: APPROVE
-
-Түсініктеме жоқ. Бір сөзмен жауап бер: REJECT немесе APPROVE.
-
-Мәтін:
-{draft}"""
-        editor_decision = await self._call_ai("Редактор", editor_prompt)
+        # 2. РЕДАКТОР: Проверка на адекватность (можно пропустить для скорости, но лучше оставить)
+        editor_system = "Ты — строгий главред. Твоя задача — пропустить новость (APPROVE) или отклонить (REJECT)."
+        editor_user = f"""
+        Оцени этот текст. 
+        Если это скучный пресс-релиз, спам, реклама или бред — ответь REJECT.
+        Если это нормальная новость с иронией/смыслом — ответь APPROVE.
         
-        if "REJECT" in editor_decision.upper():
-            logger.warning("Редактор отклонил новость.")
+        ТЕКСТ: {draft}
+        """
+        decision = await self._call_ai("Редактор", editor_system, editor_user, max_tokens=10)
+        
+        if "REJECT" in decision.upper():
+            logger.warning("Редактор отклонил новость (скучно или мусор).")
             return None
 
-        chief_editor_prompt = f"""Сен экономикалық медиа бас редакторысың. Мәтінді БАҚ заңнамасына және негізгі этикаға сәйкестігін тексер.
+        # 3. ПОЛИРОВЩИК: Финальная чистка языка и лимитов
+        polisher_system = (
+            "Ты — корректор и лингвист. Твоя цель — сделать текст идеальным и коротким. "
+            f"{LANGUAGE_RULES}"
+        )
+        
+        polisher_user = f"""
+        Отредактируй этот текст для публикации в Telegram.
+        
+        ЗАДАЧИ:
+        1. ПРОВЕРЬ ДЛИНУ: Текст ОБЯЗАН быть короче 900 символов. Если длиннее — сокращай безжалостно, убирай лишние слова.
+        2. ПРОВЕРЬ ЯЗЫК: Исправь все окончания (септіктер), убери русские/английские слова.
+        3. ФОРМАТ: Оставь HTML теги <b></b> для заголовка.
+        4. Верни ТОЛЬКО готовый текст.
+        
+        ТЕКСТ ДЛЯ ОБРАБОТКИ:
+        {draft}
+        """
+        
+        final_text = await self._call_ai("Полировщик", polisher_system, polisher_user)
+        if not final_text: return None
 
-ЕРЕЖЕ:
-1) Тек анық заңды/этикалық бұзушылықтар болса — REJECT.
-2) Бұзушылық бар болса — жауап тек: REJECT
-3) Жариялау қауіпсіз болса — жауап тек: APPROVE
+        # Финальная страховка кодом (обрезаем, если ИИ все-таки выдал много)
+        final_text = self._sanitize_published_text(final_text)
+        final_text = self.smart_truncate(final_text, max_length=950)
+        
+        return final_text
 
-Түсініктеме жоқ. Бір сөзмен: REJECT немесе APPROVE.
-
-Мәтін:
-{draft}"""
-        chief_decision = await self._call_ai("Бас редактор", chief_editor_prompt)
-
-        if "REJECT" in chief_decision.upper():
-            logger.warning("Главный редактор отклонил новость.")
-            return None
-
-        # Финальная полировка: грамматика, словарь, языковая чистота
-        polisher_prompt = f"""Сен «СНОБ» стилін сақтайтын редакторсың. Мәтінді түзетсің, бірақ автордың дауысын, контекст пен жеңіл иронияны ЖОҒАЛТПА.
-Фактілер мен географиюны ӨЗГЕРТПЕЙ, жаңа факті ҚОСПАЙ.
-
-{LANGUAGE_PURITY_RULE}
-Ай атаулары (строго): {KAZAQ_MONTHS}
-Терминдер: {KAZAQ_TERMS}
-
-{GRAMMAR_RULE}
-Міндетті: барлық шет тілі сөздерін қазақша ауыстыр; жақ/септік жалғауларын тексер және түзет. 3–5 абзац, бір тақырып. Ұзындық строго 950 таңбадан кем. Шығарманың соңында ТЕК финалды мәтінді бер. Түсініктеме жоқ.
-
-Мәтін:
-{draft}"""
-        final_text = await self._call_ai("Редактор стиля", polisher_prompt)
-        final_text = final_text.strip()
-
-        # Если текст выглядит незавершенным, аккуратно завершить
-        if self._looks_incomplete(final_text):
-            completer_prompt = f"""Келесі мәтінді қазақша жалғастырып, табиғи аяқта. Стиль сақталады: журнал колонкасы сияқты, контекст/көзқарас бар.
-{LANGUAGE_PURITY_RULE} Ай/терминдер: {KAZAQ_MONTHS}; {KAZAQ_TERMS}
-Басын қайталама, жаңа факті қоспа. Тек аяқталу бөлігін қайтар; тек таза қазақ, грамматика дұрыс.
-ЖҰМЫС МІНДЕТТІ ШЕК: барлық жауап строго 950 таңбадан кем. Total length must be strictly under 950 characters.
-
-Мәтін:
-{final_text}"""
-            completion = await self._call_ai("Завершение", completer_prompt)
-            final_text = (final_text + "\n" + completion.strip()).strip()
-
-        return self._sanitize_published_text(final_text)
-
-    async def _call_ai(self, role: str, prompt: str) -> str:
-        logger.info(f"Этап: {role} ({self.model}) работает над текстом...")
+    async def _call_ai(self, role: str, system_prompt: str, user_prompt: str, max_tokens=900) -> str:
+        logger.info(f"Этап: {role} работает...")
         try:
-            system_content = (
-                f"Сен экономикалық медиада кәсіби {role}. Стиль — журнал «СНОБ»: автордық дауыс, контекст, жеңіл ирония, фактіге сүйену. "
-                f"{LANGUAGE_PURITY_RULE} Ай/терминдер үшін строго қазақ сөздігін қолдан; грамматика (жақ, септік) дұрыс болуы керек. "
-                "Жауаптар қазақша (редактор/бас редакторда тек REJECT немесе APPROVE)."
-            )
             messages = [
-                {"role": "system", "content": system_content},
-                {"role": "user", "content": prompt}
+                {"role": "system", "content": system_content}, # ОШИБКА В ИСХОДНИКЕ БЫЛА ТУТ, ИСПРАВЛЕНО НИЖЕ
+                {"role": "user", "content": user_prompt}
             ]
+            # Исправление переменной system_content -> system_prompt
+            messages[0]["content"] = system_prompt
+            
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,
-                max_tokens=900,
-                temperature=0.7,
+                max_tokens=max_tokens,
+                temperature=0.7, 
             )
             result = response.choices[0].message.content.strip()
-            logger.info(f"{role} завершил работу. Длина текста: {len(result)}")
-            # Пауза между запросами к Groq, чтобы не превысить TPM (лимит токенов в минуту)
+            
+            # Пауза для защиты от лимитов
             delay = getattr(settings, "GROQ_DELAY_SECONDS", 20)
             if delay > 0:
-                logger.info(f"Пауза {delay} с перед следующим запросом к Groq...")
+                logger.info(f"Пауза {delay}с...")
                 await asyncio.sleep(delay)
+                
             return result
         except Exception as e:
-            logger.error(f"Ошибка на этапе {role}: {str(e)}")
-            raise e
-
-    def _looks_incomplete(self, text: str) -> bool:
-        if not text:
-            return True
-        end = text.strip()[-1]
-        return end not in [".", "!", "?", "…", "»", "”"]
+            logger.error(f"Ошибка {role}: {e}")
+            return "" # Возвращаем пустую строку, чтобы не крашить, обработаем выше
 
     def _sanitize_published_text(self, text: str) -> str:
         stripped = text.strip()
-        upper = stripped.upper()
-        if upper in ["APPROVE", "REJECT", "ACCEPT", "OK"]:
-            return ""
-        for token in ["APPROVE", "REJECT", "ACCEPT"]:
+        # Удаляем служебные ответы, если вдруг проскочили
+        for token in ["APPROVE", "REJECT", "ACCEPT", "DONE", "Here is the text"]:
             stripped = stripped.replace(token, "")
-        # Telegram использует HTML: **текст** → <b>текст</b>
+            
+        # Чистка Markdown в HTML
         stripped = re.sub(r"\*\*([^*]+)\*\*", r"<b>\1</b>", stripped)
+        
+        # Чистка лишних заголовков от ИИ
         lines = stripped.splitlines()
         cleaned_lines = []
         for line in lines:
-            l = line.lstrip()
-            if l.startswith("### "):
-                cleaned_lines.append(l[4:])
-            elif l.startswith("## "):
-                cleaned_lines.append(l[3:])
-            elif l.startswith("# "):
-                cleaned_lines.append(l[2:])
-            else:
-                cleaned_lines.append(line)
-        return "\n".join(x.strip() for x in cleaned_lines).strip()
+            if not line.strip(): continue
+            if "Sure, here" in line or "Вот текст" in line: continue
+            cleaned_lines.append(line.strip())
+            
+        return "\n\n".join(cleaned_lines)
 
 rewriter = ContentRewriter(
     api_key=settings.GROQ_API_KEY,
