@@ -6,163 +6,196 @@ from typing import List, Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-# --- НАСТРОЙКИ ФИЛЬТРАЦИИ (РАСШИРЕННЫЕ) ---
-TARGET_KEYWORDS = [
-    # Туризм и Авиа (Основа)
-    "туризм", "путешестви", "авиа", "рейс", "курорт", "виза", "шенген", 
-    "отдых", "самолет", "границ", "отель", "flyarystan", "air astana", 
-    "поезд", "билет", "паспорт", "безвиз", "scat", "qazaq air",
-    # Экономика и Политика (Для контекста)
-    "тенге", "налог", "бюджет", "инвестиц", "токаев", "министр", 
-    "закон", "парламент", "правительств", "банк", "ввп", "инфляци",
-    # Общие темы (Чтобы ловить больше новостей для "Сноба")
-    "казахстан", "астана", "алматы", "шымкент", "қоғам", "сұхбат", 
-    "жоба", "өзгеріс", "тарих", "мәдениет", "экология", "ауа райы", "климат",
-    "образовани", "медицина", "технологи", "цифр", "internet", "связь"
-]
-
-# Все источники — только прямой парсинг сайтов (без RSS).
-# ИСТОЧНИКИ: ЛЕНТЫ НОВОСТЕЙ (FEED)
-# Ссылки ведут на страницы "Все новости" или "Лента", где контент обновляется хронологически.
+# ИСТОЧНИКИ: ОФИЦИАЛЬНЫЕ САЙТЫ ГОСУДАРСТВЕННЫХ ОРГАНОВ (РУССКИЕ ВЕРСИИ)
 DIRECT_SCRAPE_SOURCES: List[Dict] = [
-    # --- ПРОФИЛЬНЫЕ (Туризм) ---
+    # --- ВЫСШЕЕ РУКОВОДСТВО ---
     {
-        "name": "TengriTravel",
-        "url": "https://tengritravel.kz/", # У них лента прямо на главной
-        "article_selector": ".tn-article-item", 
-        "title_selector": ".tn-article-title",
-        "link_selector": "a",
-        "base_url": "https://tengritravel.kz",
+        "name": "Akorda (Президент)",
+        "url": "https://www.akorda.kz/ru/events",
+        "article_selector": ".event-item, .news-list__item",
+        "title_selector": "h3 a, .title a, a",
+        "link_selector": "h3 a, .title a, a",
+        "base_url": "https://www.akorda.kz",
     },
     {
-        "name": "Kapital Tourism",
-        "url": "https://kapital.kz/tourism",
-        "article_selector": ".news-list__item", # Селектор списка
-        "title_selector": "a.news-list__title",
-        "link_selector": "a.news-list__title",
-        "base_url": "https://kapital.kz",
+        "name": "PrimeMinister (Правительство)",
+        "url": "https://primeminister.kz/ru/news",
+        "article_selector": ".news_item, .card, .post-item",
+        "title_selector": ".news_title a, .card-title a, a",
+        "link_selector": "a",
+        "base_url": "https://primeminister.kz",
     },
 
-    # --- ЛЕНТЫ НОВОСТЕЙ СМИ (ОБЩИЕ) ---
+    # --- МИНИСТЕРСТВА (GOV.KZ - Единая платформа) ---
     {
-        "name": "Tengrinews (Лента)",
-        "url": "https://tengrinews.kz/news/", # Лента, а не главная
-        "article_selector": ".tn-article-item",
-        "title_selector": "span.tn-article-title",
-        "link_selector": "a.tn-article-item",
-        "base_url": "https://tengrinews.kz",
+        "name": "МинНацЭкономики",
+        "url": "https://www.gov.kz/memleket/entities/economy/press/news?lang=ru",
+        "article_selector": ".showcase-item",
+        "title_selector": ".showcase-item__title",
+        "link_selector": "a.showcase-item__title",
+        "base_url": "https://www.gov.kz",
     },
     {
-        "name": "Zakon (Лента)",
-        "url": "https://www.zakon.kz/news/",
-        "article_selector": ".z-card-news, .news-item",
-        "title_selector": ".z-card-news__title a, a",
-        "link_selector": "a",
-        "base_url": "https://www.zakon.kz",
+        "name": "МинФин",
+        "url": "https://www.gov.kz/memleket/entities/minfin/press/news?lang=ru",
+        "article_selector": ".showcase-item",
+        "title_selector": ".showcase-item__title",
+        "link_selector": "a.showcase-item__title",
+        "base_url": "https://www.gov.kz",
     },
     {
-        "name": "Inform (Лента)",
-        "url": "https://www.inform.kz/ru/lenta",
-        "article_selector": ".lenta_news_item, .article-item",
-        "title_selector": "a.title, .article-item__title",
-        "link_selector": "a",
-        "base_url": "https://www.inform.kz",
+        "name": "МИД РК",
+        "url": "https://www.gov.kz/memleket/entities/mfa/press/news?lang=ru",
+        "article_selector": ".showcase-item",
+        "title_selector": ".showcase-item__title",
+        "link_selector": "a.showcase-item__title",
+        "base_url": "https://www.gov.kz",
     },
     {
-        "name": "Nur (Последние)",
-        "url": "https://www.nur.kz/latest/",
-        "article_selector": ".article-card",
-        "title_selector": "a.article-card__title",
-        "link_selector": "a.article-card__title",
-        "base_url": "https://www.nur.kz",
+        "name": "МВД РК",
+        "url": "https://www.gov.kz/memleket/entities/qriim/press/news?lang=ru",
+        "article_selector": ".showcase-item",
+        "title_selector": ".showcase-item__title",
+        "link_selector": "a.showcase-item__title",
+        "base_url": "https://www.gov.kz",
     },
     {
-        "name": "Kapital (Все)",
-        "url": "https://kapital.kz/all",
-        "article_selector": ".news-list__item",
-        "title_selector": "a.news-list__title",
-        "link_selector": "a.news-list__title",
-        "base_url": "https://kapital.kz",
+        "name": "МинТруда",
+        "url": "https://www.gov.kz/memleket/entities/enbek/press/news?lang=ru",
+        "article_selector": ".showcase-item",
+        "title_selector": ".showcase-item__title",
+        "link_selector": "a.showcase-item__title",
+        "base_url": "https://www.gov.kz",
     },
     {
-        "name": "Forbes (Лента)",
-        "url": "https://forbes.kz/news",
-        "article_selector": ".news-list__item, .news-item",
-        "title_selector": ".news-list__title a, .title a",
-        "link_selector": "a",
-        "base_url": "https://forbes.kz",
+        "name": "МинЗдрав",
+        "url": "https://www.gov.kz/memleket/entities/dsm/press/news?lang=ru",
+        "article_selector": ".showcase-item",
+        "title_selector": ".showcase-item__title",
+        "link_selector": "a.showcase-item__title",
+        "base_url": "https://www.gov.kz",
     },
     {
-        "name": "Inbusiness (Лента)",
-        "url": "https://inbusiness.kz/ru/last",
-        "article_selector": ".news-item, .item",
-        "title_selector": "a.title, .title a",
-        "link_selector": "a",
-        "base_url": "https://inbusiness.kz",
+        "name": "МинПросвещения",
+        "url": "https://www.gov.kz/memleket/entities/edu/press/news?lang=ru",
+        "article_selector": ".showcase-item",
+        "title_selector": ".showcase-item__title",
+        "link_selector": "a.showcase-item__title",
+        "base_url": "https://www.gov.kz",
     },
     {
-        "name": "Time (Лента)",
-        "url": "https://time.kz/news",
-        "article_selector": ".news-item",
-        "title_selector": "a.news-link",
-        "link_selector": "a",
-        "base_url": "https://time.kz",
+        "name": "МинНауки",
+        "url": "https://www.gov.kz/memleket/entities/sci/press/news?lang=ru",
+        "article_selector": ".showcase-item",
+        "title_selector": ".showcase-item__title",
+        "link_selector": "a.showcase-item__title",
+        "base_url": "https://www.gov.kz",
     },
     {
-        "name": "Orda (Главная/Лента)",
-        "url": "https://orda.kz/ru/",
-        "article_selector": ".main-feed-item, .post-item", # Актуальный селектор ленты
-        "title_selector": "a.main-feed-title, h3 a",
-        "link_selector": "a",
-        "base_url": "https://orda.kz",
+        "name": "МинПромСтрой",
+        "url": "https://www.gov.kz/memleket/entities/mps/press/news?lang=ru",
+        "article_selector": ".showcase-item",
+        "title_selector": ".showcase-item__title",
+        "link_selector": "a.showcase-item__title",
+        "base_url": "https://www.gov.kz",
     },
     {
-        "name": "Lada (Все)",
-        "url": "https://www.lada.kz/all",
-        "article_selector": ".news-item, .article",
-        "title_selector": ".news-title a, a.title",
-        "link_selector": "a",
-        "base_url": "https://www.lada.kz",
+        "name": "МинТранспорт",
+        "url": "https://www.gov.kz/memleket/entities/transport/press/news?lang=ru",
+        "article_selector": ".showcase-item",
+        "title_selector": ".showcase-item__title",
+        "link_selector": "a.showcase-item__title",
+        "base_url": "https://www.gov.kz",
     },
     {
-        "name": "Ulysmedia (Новости)",
-        "url": "https://ulysmedia.kz/news/",
-        "article_selector": ".news-item, .feed-item",
-        "title_selector": "a.news-title, h3 a",
-        "link_selector": "a",
-        "base_url": "https://ulysmedia.kz",
+        "name": "МинЦифры",
+        "url": "https://www.gov.kz/memleket/entities/mdai/press/news?lang=ru",
+        "article_selector": ".showcase-item",
+        "title_selector": ".showcase-item__title",
+        "link_selector": "a.showcase-item__title",
+        "base_url": "https://www.gov.kz",
     },
     {
-        "name": "Vlast (Новости)",
-        "url": "https://vlast.kz/novosti/",
-        "article_selector": ".article-item, .news-item",
-        "title_selector": "a",
-        "link_selector": "a",
-        "base_url": "https://vlast.kz",
+        "name": "МинКультуры",
+        "url": "https://www.gov.kz/memleket/entities/mam/press/news?lang=ru",
+        "article_selector": ".showcase-item",
+        "title_selector": ".showcase-item__title",
+        "link_selector": "a.showcase-item__title",
+        "base_url": "https://www.gov.kz",
     },
     {
-        "name": "Kursiv (Лента)",
-        "url": "https://kz.kursiv.media/news/",
-        "article_selector": ".post-card, .news-item",
-        "title_selector": "h3 a, .title a",
-        "link_selector": "a",
-        "base_url": "https://kz.kursiv.media",
+        "name": "МинТуризм",
+        "url": "https://www.gov.kz/memleket/entities/tsm/press/news?lang=ru",
+        "article_selector": ".showcase-item",
+        "title_selector": ".showcase-item__title",
+        "link_selector": "a.showcase-item__title",
+        "base_url": "https://www.gov.kz",
     },
     {
-        "name": "KazTAG (Лента)",
-        "url": "https://kaztag.kz/ru/news/",
-        "article_selector": ".news-item, .article",
-        "title_selector": ".title a, a",
-        "link_selector": "a",
-        "base_url": "https://kaztag.kz",
+        "name": "МинЭкологии",
+        "url": "https://www.gov.kz/memleket/entities/ecogeo/press/news?lang=ru",
+        "article_selector": ".showcase-item",
+        "title_selector": ".showcase-item__title",
+        "link_selector": "a.showcase-item__title",
+        "base_url": "https://www.gov.kz",
     },
     {
-        "name": "ArbatMedia (Новости)",
-        "url": "https://arbatmedia.kz/news-kz", # Новый домен
-        "article_selector": ".news-card, .post-item",
-        "title_selector": "h3 a, .title a",
-        "link_selector": "a",
-        "base_url": "https://arbatmedia.kz",
+        "name": "МинСельХоз",
+        "url": "https://www.gov.kz/memleket/entities/moa/press/news?lang=ru",
+        "article_selector": ".showcase-item",
+        "title_selector": ".showcase-item__title",
+        "link_selector": "a.showcase-item__title",
+        "base_url": "https://www.gov.kz",
+    },
+    {
+        "name": "МинЭнерго",
+        "url": "https://www.gov.kz/memleket/entities/energo/press/news?lang=ru",
+        "article_selector": ".showcase-item",
+        "title_selector": ".showcase-item__title",
+        "link_selector": "a.showcase-item__title",
+        "base_url": "https://www.gov.kz",
+    },
+    {
+        "name": "МинЮст",
+        "url": "https://www.gov.kz/memleket/entities/adilet/press/news?lang=ru",
+        "article_selector": ".showcase-item",
+        "title_selector": ".showcase-item__title",
+        "link_selector": "a.showcase-item__title",
+        "base_url": "https://www.gov.kz",
+    },
+    {
+        "name": "МЧС РК",
+        "url": "https://www.gov.kz/memleket/entities/emer/press/news?lang=ru",
+        "article_selector": ".showcase-item",
+        "title_selector": ".showcase-item__title",
+        "link_selector": "a.showcase-item__title",
+        "base_url": "https://www.gov.kz",
+    },
+    {
+        "name": "МинТорговли",
+        "url": "https://www.gov.kz/memleket/entities/mti/press/news?lang=ru",
+        "article_selector": ".showcase-item",
+        "title_selector": ".showcase-item__title",
+        "link_selector": "a.showcase-item__title",
+        "base_url": "https://www.gov.kz",
+    },
+
+    # --- АКИМАТЫ МЕГАПОЛИСОВ ---
+    {
+        "name": "Акимат Алматы",
+        "url": "https://www.gov.kz/memleket/entities/almaty/press/news?lang=ru",
+        "article_selector": ".showcase-item",
+        "title_selector": ".showcase-item__title",
+        "link_selector": "a.showcase-item__title",
+        "base_url": "https://www.gov.kz",
+    },
+    {
+        "name": "Акимат Астаны",
+        "url": "https://www.gov.kz/memleket/entities/astana/press/news?lang=ru",
+        "article_selector": ".showcase-item",
+        "title_selector": ".showcase-item__title",
+        "link_selector": "a.showcase-item__title",
+        "base_url": "https://www.gov.kz",
     },
 ]
 
@@ -178,7 +211,7 @@ class NewsScraper:
         return all_news
 
     def _scrape_direct_source(self, config: Dict) -> List[Dict]:
-        """Парсит страницу со списком статей по селекторам (для СМИ без RSS)."""
+        """Парсит страницу со списком статей по селекторам."""
         name = config.get("name", "Unknown")
         url = config.get("url")
         article_sel = config.get("article_selector")
@@ -187,7 +220,7 @@ class NewsScraper:
         base_url = config.get("base_url", "").rstrip("/")
         
         if not url or not article_sel or not title_sel:
-            logger.warning(f"Direct source '{name}' skipped: missing url/article_selector/title_selector")
+            logger.warning(f"Direct source '{name}' skipped: missing config")
             return []
             
         news = []
@@ -197,7 +230,7 @@ class NewsScraper:
             resp = requests.get(url, headers=headers, timeout=15)
             soup = BeautifulSoup(resp.content, "html.parser")
             
-            # --- ИЗМЕНЕНИЕ: БЕРЕМ ТОП-20, А НЕ 5 ---
+            # Берем первые 20 новостей из ленты
             articles = soup.select(article_sel)[:20] 
             
             for art in articles:
@@ -217,13 +250,8 @@ class NewsScraper:
                 if not link.startswith("http"):
                     link = base_url + "/" + link
 
-                # --- ФИЛЬТРАЦИЯ ---
-                is_specialized_source = "tourism" in url or "travel" in url
-                title_lower = title.lower()
-                has_keyword = any(k in title_lower for k in TARGET_KEYWORDS)
-
-                if not is_specialized_source and not has_keyword:
-                    continue
+                # ФИЛЬТРАЦИЯ ПО КЛЮЧЕВЫМ СЛОВАМ УДАЛЕНА ПО ЗАПРОСУ ПОЛЬЗОВАТЕЛЯ
+                # Собираем всё подряд из указанных источников.
 
                 full_text, image_url, published_at = self._fetch_full_text_and_image(link)
                 
@@ -240,7 +268,7 @@ class NewsScraper:
         return news
 
     def _extract_publish_date(self, soup: BeautifulSoup) -> Optional[datetime]:
-        """Извлекает дату/время публикации со страницы статьи."""
+        """Извлекает дату публикации."""
         for prop in ("article:published_time", "published_time", "date"):
             meta = soup.find("meta", property=prop) or soup.find("meta", attrs={"name": prop})
             if meta and meta.get("content"):
@@ -248,10 +276,6 @@ class NewsScraper:
         time_el = soup.find("time", attrs={"datetime": True})
         if time_el and time_el.get("datetime"):
             return self._parse_date(time_el["datetime"])
-        for attr in ("data-published", "data-date", "data-time"):
-            el = soup.find(attrs={attr: True})
-            if el and el.get(attr):
-                return self._parse_date(el[attr])
         return None
 
     def _parse_date(self, value: str) -> Optional[datetime]:
@@ -269,22 +293,23 @@ class NewsScraper:
                 if d.tzinfo:
                     d = d.astimezone(timezone.utc).replace(tzinfo=None)
                 return d
-            except (ValueError, TypeError):
+            except:
                 continue
         return None
 
     def _fetch_full_text_and_image(self, url: str) -> Tuple[Optional[str], Optional[str], Optional[datetime]]:
         try:
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-            }
+            headers = {"User-Agent": "Mozilla/5.0"}
             response = requests.get(url, headers=headers, timeout=15)
             if response.status_code != 200:
                 return None, None, None
             soup = BeautifulSoup(response.content, "html.parser")
+            
+            # Собираем основной текст статьи
             paragraphs = soup.find_all("p")
             text = "\n".join([p.get_text() for p in paragraphs if len(p.get_text()) > 50])
+            
+            # Картинка
             image_url = None
             og = soup.find("meta", property="og:image")
             if og and og.get("content"):
@@ -293,6 +318,7 @@ class NewsScraper:
                 img = soup.find("img")
                 if img and img.get("src"):
                     image_url = img.get("src")
+                    
             published_at = self._extract_publish_date(soup)
             return text, image_url, published_at
         except Exception:
