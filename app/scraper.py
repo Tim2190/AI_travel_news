@@ -6,22 +6,22 @@ from typing import List, Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-# --- НАСТРОЙКИ ФИЛЬТРАЦИИ ---
-# Список ключевых слов для отбора новостей (все в нижнем регистре).
-# Если заголовок содержит одно из этих слов, новость берем в обработку.
+# --- НАСТРОЙКИ ФИЛЬТРАЦИИ (РАСШИРЕННЫЕ) ---
 TARGET_KEYWORDS = [
-    # Туризм и Авиа
+    # Туризм и Авиа (Основа)
     "туризм", "путешестви", "авиа", "рейс", "курорт", "виза", "шенген", 
     "отдых", "самолет", "границ", "отель", "flyarystan", "air astana", 
-    "поезд", "билет", "паспорт", "безвиз", "qazaq air", "scat",
-    # Экономика и Политика (для стиля "Сноб")
+    "поезд", "билет", "паспорт", "безвиз", "scat", "qazaq air",
+    # Экономика и Политика (Для контекста)
     "тенге", "налог", "бюджет", "инвестиц", "токаев", "министр", 
-    "закон", "парламент", "казахстан", "правительств", "банк", 
-    "экспорт", "импорт", "ввп", "инфляци"
+    "закон", "парламент", "правительств", "банк", "ввп", "инфляци",
+    # Общие темы (Чтобы ловить больше новостей для "Сноба")
+    "казахстан", "астана", "алматы", "шымкент", "қоғам", "сұхбат", 
+    "жоба", "өзгеріс", "тарих", "мәдениет", "экология", "ауа райы", "климат",
+    "образовани", "медицина", "технологи", "цифр", "internet", "связь"
 ]
 
 # Все источники — только прямой парсинг сайтов (без RSS).
-# Селекторы подобраны под типичную вёрстку; если сайт обновился — поправь под актуальный HTML.
 DIRECT_SCRAPE_SOURCES: List[Dict] = [
     # Путешествия
     {
@@ -209,8 +209,8 @@ class NewsScraper:
             resp = requests.get(url, headers=headers, timeout=15)
             soup = BeautifulSoup(resp.content, "html.parser")
             
-            # --- ИЗМЕНЕНИЕ: ЛИМИТ ДО 5 ---
-            articles = soup.select(article_sel)[:5] 
+            # --- ИЗМЕНЕНИЕ: БЕРЕМ ТОП-20, А НЕ 5 ---
+            articles = soup.select(article_sel)[:20] 
             
             for art in articles:
                 title_el = art.select_one(title_sel)
@@ -229,18 +229,14 @@ class NewsScraper:
                 if not link.startswith("http"):
                     link = base_url + "/" + link
 
-                # --- ИЗМЕНЕНИЕ: ФИЛЬТРАЦИЯ ПО КЛЮЧЕВЫМ СЛОВАМ ---
-                # Проверяем, подходит ли новость по теме, ДО того как скачивать полный текст.
-                # Если сайт профильный (Tourism/Travel), берем всё. Если общий — фильтруем.
+                # --- ФИЛЬТРАЦИЯ ---
                 is_specialized_source = "tourism" in url or "travel" in url
                 title_lower = title.lower()
                 has_keyword = any(k in title_lower for k in TARGET_KEYWORDS)
 
                 if not is_specialized_source and not has_keyword:
-                    # Пропускаем новость, если это не туризм и в заголовке нет нужных слов
                     continue
 
-                # Если проверка пройдена, качаем полный текст
                 full_text, image_url, published_at = self._fetch_full_text_and_image(link)
                 
                 news.append({
@@ -257,16 +253,13 @@ class NewsScraper:
 
     def _extract_publish_date(self, soup: BeautifulSoup) -> Optional[datetime]:
         """Извлекает дату/время публикации со страницы статьи."""
-        # Open Graph / Schema
         for prop in ("article:published_time", "published_time", "date"):
             meta = soup.find("meta", property=prop) or soup.find("meta", attrs={"name": prop})
             if meta and meta.get("content"):
                 return self._parse_date(meta["content"])
-        # <time datetime="...">
         time_el = soup.find("time", attrs={"datetime": True})
         if time_el and time_el.get("datetime"):
             return self._parse_date(time_el["datetime"])
-        # data-published, data-date
         for attr in ("data-published", "data-date", "data-time"):
             el = soup.find(attrs={attr: True})
             if el and el.get(attr):
@@ -276,7 +269,7 @@ class NewsScraper:
     def _parse_date(self, value: str) -> Optional[datetime]:
         if not value or not value.strip():
             return None
-        value = value.strip()[:25]  # ISO часто YYYY-MM-DDTHH:MM:SS+00:00
+        value = value.strip()[:25]
         for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
             try:
                 if value.endswith("Z"):
