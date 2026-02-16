@@ -22,12 +22,14 @@ TARGET_KEYWORDS = [
 ]
 
 # Все источники — только прямой парсинг сайтов (без RSS).
+# ИСТОЧНИКИ: ЛЕНТЫ НОВОСТЕЙ (FEED)
+# Ссылки ведут на страницы "Все новости" или "Лента", где контент обновляется хронологически.
 DIRECT_SCRAPE_SOURCES: List[Dict] = [
-    # Путешествия
+    # --- ПРОФИЛЬНЫЕ (Туризм) ---
     {
         "name": "TengriTravel",
-        "url": "https://tengritravel.kz/",
-        "article_selector": ".tn-article-item",
+        "url": "https://tengritravel.kz/", # У них лента прямо на главной
+        "article_selector": ".tn-article-item", 
         "title_selector": ".tn-article-title",
         "link_selector": "a",
         "base_url": "https://tengritravel.kz",
@@ -35,148 +37,134 @@ DIRECT_SCRAPE_SOURCES: List[Dict] = [
     {
         "name": "Kapital Tourism",
         "url": "https://kapital.kz/tourism",
-        "article_selector": ".main-news__item, .news-list__item",
-        "title_selector": "a.main-news__title, a.news-list__title",
-        "link_selector": "a.main-news__title, a.news-list__title",
+        "article_selector": ".news-list__item", # Селектор списка
+        "title_selector": "a.news-list__title",
+        "link_selector": "a.news-list__title",
         "base_url": "https://kapital.kz",
     },
-    # Tengrinews (главная)
+
+    # --- ЛЕНТЫ НОВОСТЕЙ СМИ (ОБЩИЕ) ---
     {
-        "name": "Tengrinews",
-        "url": "https://tengrinews.kz/",
-        "article_selector": ".tn-main-news-item",
-        "title_selector": "a.tn-link",
-        "link_selector": "a.tn-link",
+        "name": "Tengrinews (Лента)",
+        "url": "https://tengrinews.kz/news/", # Лента, а не главная
+        "article_selector": ".tn-article-item",
+        "title_selector": "span.tn-article-title",
+        "link_selector": "a.tn-article-item",
         "base_url": "https://tengrinews.kz",
     },
-    # Zakon.kz
     {
-        "name": "Zakon.kz",
-        "url": "https://www.zakon.kz/",
-        "article_selector": ".block-news-item, .news-item, article",
-        "title_selector": "a",
+        "name": "Zakon (Лента)",
+        "url": "https://www.zakon.kz/news/",
+        "article_selector": ".z-card-news, .news-item",
+        "title_selector": ".z-card-news__title a, a",
         "link_selector": "a",
         "base_url": "https://www.zakon.kz",
     },
-    # Inform.kz
     {
-        "name": "Inform.kz",
-        "url": "https://www.inform.kz/ru",
-        "article_selector": ".article-item, .news-item, .item",
-        "title_selector": "a, .title a",
+        "name": "Inform (Лента)",
+        "url": "https://www.inform.kz/ru/lenta",
+        "article_selector": ".lenta_news_item, .article-item",
+        "title_selector": "a.title, .article-item__title",
         "link_selector": "a",
         "base_url": "https://www.inform.kz",
     },
-    # Nur.kz
     {
-        "name": "Nur.kz",
-        "url": "https://www.nur.kz/",
-        "article_selector": "article, .article-card, .news-item",
-        "title_selector": "a[href*='/news/'], .title a, h2 a",
-        "link_selector": "a",
+        "name": "Nur (Последние)",
+        "url": "https://www.nur.kz/latest/",
+        "article_selector": ".article-card",
+        "title_selector": "a.article-card__title",
+        "link_selector": "a.article-card__title",
         "base_url": "https://www.nur.kz",
     },
-    # Kapital.kz (главная)
     {
-        "name": "Kapital.kz",
-        "url": "https://kapital.kz/",
-        "article_selector": ".main-news__item, .news-list__item",
-        "title_selector": "a.main-news__title, a.news-list__title",
-        "link_selector": "a.main-news__title, a.news-list__title",
+        "name": "Kapital (Все)",
+        "url": "https://kapital.kz/all",
+        "article_selector": ".news-list__item",
+        "title_selector": "a.news-list__title",
+        "link_selector": "a.news-list__title",
         "base_url": "https://kapital.kz",
     },
-    # Forbes.kz
     {
-        "name": "Forbes.kz",
-        "url": "https://forbes.kz/",
-        "article_selector": ".article-item, article, .news-item",
-        "title_selector": "a, h2 a, .title a",
+        "name": "Forbes (Лента)",
+        "url": "https://forbes.kz/news",
+        "article_selector": ".news-list__item, .news-item",
+        "title_selector": ".news-list__title a, .title a",
         "link_selector": "a",
         "base_url": "https://forbes.kz",
     },
-    # Inbusiness.kz
     {
-        "name": "Inbusiness.kz",
-        "url": "https://inbusiness.kz/ru",
-        "article_selector": ".news-item, article, .item",
-        "title_selector": "a, .title a",
+        "name": "Inbusiness (Лента)",
+        "url": "https://inbusiness.kz/ru/last",
+        "article_selector": ".news-item, .item",
+        "title_selector": "a.title, .title a",
         "link_selector": "a",
         "base_url": "https://inbusiness.kz",
     },
-    # Time.kz
     {
-        "name": "Time.kz",
-        "url": "https://time.kz/",
-        "article_selector": ".news-item, article, .item",
-        "title_selector": "a, h2 a",
+        "name": "Time (Лента)",
+        "url": "https://time.kz/news",
+        "article_selector": ".news-item",
+        "title_selector": "a.news-link",
         "link_selector": "a",
         "base_url": "https://time.kz",
     },
-    # Orda.kz
     {
-        "name": "Orda.kz",
-        "url": "https://orda.kz/",
-        "article_selector": ".post, article, .news-item",
-        "title_selector": "a, .entry-title a, h2 a",
+        "name": "Orda (Главная/Лента)",
+        "url": "https://orda.kz/ru/",
+        "article_selector": ".main-feed-item, .post-item", # Актуальный селектор ленты
+        "title_selector": "a.main-feed-title, h3 a",
         "link_selector": "a",
         "base_url": "https://orda.kz",
     },
-    # Lada.kz
     {
-        "name": "Lada.kz",
-        "url": "https://www.lada.kz/",
-        "article_selector": ".news-item, article, .item",
-        "title_selector": "a, .title a",
+        "name": "Lada (Все)",
+        "url": "https://www.lada.kz/all",
+        "article_selector": ".news-item, .article",
+        "title_selector": ".news-title a, a.title",
         "link_selector": "a",
         "base_url": "https://www.lada.kz",
     },
-    # Ulysmedia.kz
     {
-        "name": "Ulysmedia.kz",
-        "url": "https://ulysmedia.kz/",
-        "article_selector": ".news-item, article",
-        "title_selector": "a, h2 a",
+        "name": "Ulysmedia (Новости)",
+        "url": "https://ulysmedia.kz/news/",
+        "article_selector": ".news-item, .feed-item",
+        "title_selector": "a.news-title, h3 a",
         "link_selector": "a",
         "base_url": "https://ulysmedia.kz",
     },
-    # Vlast.kz
     {
-        "name": "Vlast.kz",
-        "url": "https://vlast.kz/",
-        "article_selector": ".article-item, article, .news-item",
-        "title_selector": "a, .title a",
+        "name": "Vlast (Новости)",
+        "url": "https://vlast.kz/novosti/",
+        "article_selector": ".article-item, .news-item",
+        "title_selector": "a",
         "link_selector": "a",
         "base_url": "https://vlast.kz",
     },
-    # Kursiv.media
     {
-        "name": "Kursiv.media",
-        "url": "https://kursiv.media/news",
-        "article_selector": ".article-item, article, .news-item",
-        "title_selector": "a, h2 a",
+        "name": "Kursiv (Лента)",
+        "url": "https://kz.kursiv.media/news/",
+        "article_selector": ".post-card, .news-item",
+        "title_selector": "h3 a, .title a",
         "link_selector": "a",
-        "base_url": "https://kursiv.media",
+        "base_url": "https://kz.kursiv.media",
     },
-    # KazTAG
     {
-        "name": "KazTAG",
-        "url": "https://kaztag.kz/ru",
-        "article_selector": ".news-item, article, .item",
-        "title_selector": "a, .title a",
+        "name": "KazTAG (Лента)",
+        "url": "https://kaztag.kz/ru/news/",
+        "article_selector": ".news-item, .article",
+        "title_selector": ".title a, a",
         "link_selector": "a",
         "base_url": "https://kaztag.kz",
     },
-    # Arbat.media
     {
-        "name": "Arbat.media",
-        "url": "https://arbat.media/",
-        "article_selector": ".news-item, article, .post",
-        "title_selector": "a, h2 a",
+        "name": "ArbatMedia (Новости)",
+        "url": "https://arbatmedia.kz/news-kz", # Новый домен
+        "article_selector": ".news-card, .post-item",
+        "title_selector": "h3 a, .title a",
         "link_selector": "a",
-        "base_url": "https://arbat.media",
+        "base_url": "https://arbatmedia.kz",
     },
 ]
-
 
 class NewsScraper:
     def __init__(self, direct_sources: List[Dict] = None):
