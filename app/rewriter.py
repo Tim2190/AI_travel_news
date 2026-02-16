@@ -35,7 +35,6 @@ class ContentRewriter:
         truncated = text[:max_length]
         
         # Ищем последние знаки препинания, чтобы не оборвать на полуслове
-        # Приоритет: точка, восклицательный, вопросительный, кавычка
         last_sentence_end = -1
         for char in ['.', '!', '?', '»', '"']:
             pos = truncated.rfind(char)
@@ -131,12 +130,11 @@ class ContentRewriter:
     async def _call_ai(self, role: str, system_prompt: str, user_prompt: str, max_tokens=900) -> str:
         logger.info(f"Этап: {role} работает...")
         try:
-            # ВОТ ТУТ БЫЛА ОШИБКА, ТЕПЕРЬ ИСПРАВЛЕНО:
+            # === ИСПРАВЛЕНИЕ: Используем system_prompt напрямую ===
             messages = [
-                {"role": "system", "content": system_content}, 
+                {"role": "system", "content": system_prompt}, 
                 {"role": "user", "content": user_prompt}
             ]
-            messages[0]["content"] = system_prompt # Явное присвоение для надежности
             
             response = self.client.chat.completions.create(
                 model=self.model,
