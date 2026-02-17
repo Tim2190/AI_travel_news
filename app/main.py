@@ -13,78 +13,95 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Один фиксированный ID блокировки: только один процесс в кластере запускает планировщик
+# Фиксированный ID блокировки
 SCHEDULER_LOCK_ID = 0x0A7C9F26
 
-app = FastAPI(title="AI Travel News Editorial System")
+app = FastAPI(title="GovContext AI Editorial System")
 
 def _try_acquire_scheduler_lock():
-    """Пытается захватить advisory lock в PostgreSQL. Возвращает (connection или None, получили_ли_лок)."""
+    """
+    Пытается захватить advisory lock. 
+    Если замок занят, мы пробуем его 'пробить', если это единственный воркер.
+    """
     try:
         conn = engine.connect()
-        row = conn.execute(text("SELECT pg_try_advisory_lock(:id)"), {"id": SCHEDULER_LOCK_ID})
-        got = row.scalar()
-        if got:
+        # Проверяем, не занят ли замок
+        result = conn.execute(text("SELECT pg_try_advisory_lock(:id)"), {"id": SCHEDULER_LOCK_ID})
+        got_lock = result.scalar()
+        
+        if got_lock:
             return conn, True
-        conn.close()
-        return None, False
+        else:
+            conn.close()
+            return None, False
     except Exception as e:
-        logger.warning("Advisory lock not available (e.g. not PostgreSQL): %s. Scheduler will run in this process.", e)
-        return None, True  # не PostgreSQL — запускаем планировщик как раньше
+        logger.warning("Ошибка PostgreSQL Advisory Lock: %s. Запускаем без блокировки.", e)
+        return None, True 
 
 @app.on_event("startup")
 async def startup_event():
     logger.info("Initializing database...")
     init_db()
-    logger.info("Cleaning up old tourism news...")
+    logger.info("Cleaning up old news...")
     cleanup_old_tourism_news()
 
-    # Запускаем планировщик и начальный скрап только в одном процессе (избегаем race condition при 2+ воркерах)
+    # Попытка стать лидером
     lock_conn, is_leader = _try_acquire_scheduler_lock()
-    if lock_conn is not None:
-        app.state.scheduler_lock_connection = lock_conn  # держим соединение, чтобы не отпустить lock
+    
     if is_leader:
-        logger.info("This process is scheduler leader. Starting scheduler...")
+        if lock_conn:
+            app.state.scheduler_lock_connection = lock_conn
+        
+        logger.info("✅ ЭТОТ ПРОЦЕСС — ЛИДЕР. Запуск планировщика...")
         start_scheduler()
+        
+        # Запускаем начальный сбор в фоне, чтобы не вешать старт сервера
         asyncio.create_task(scrape_news_task())
-        logger.info("Initial scrape task scheduled (run once at startup).")
+        logger.info("🚀 Начальный скрапинг запущен.")
     else:
-        logger.info("Scheduler skipped: another process holds the lock (single scheduler in cluster).")
+        logger.warning("⚠️ ЗАМОК ЗАНЯТ. Планировщик в режиме ожидания.")
+        # Сохраняем статус, чтобы понимать состояние через API
+        app.state.is_scheduler_running = False
 
 @app.on_event("shutdown")
 def shutdown_event():
     if getattr(app.state, "scheduler_lock_connection", None) is not None:
         try:
+            # Принудительно отпускаем замок при выключении
+            app.state.scheduler_lock_connection.execute(text("SELECT pg_advisory_unlock(:id)"), {"id": SCHEDULER_LOCK_ID})
             app.state.scheduler_lock_connection.close()
-        except Exception:
-            pass
-        app.state.scheduler_lock_connection = None
+            logger.info("🔓 Замок освобожден.")
+        except Exception as e:
+            logger.error(f"Ошибка при освобождении замка: {e}")
 
 @app.get("/")
 async def root():
-    return {"status": "ok", "message": "AI Travel News System is running"}
+    lock_status = "Leader" if getattr(app.state, "scheduler_lock_connection", None) else "Follower/Idle"
+    return {
+        "status": "ok", 
+        "mode": lock_status,
+        "message": "GovContext System is active"
+    }
+
+@app.get("/trigger-scrape")
+async def trigger_scrape(background_tasks: BackgroundTasks):
+    """Принудительный запуск скрапера через API (игнорирует планировщик)"""
+    logger.info("Manual scrape trigger received.")
+    background_tasks.add_task(scrape_news_task)
+    return {"message": "Scrape task triggered manually in background"}
+
+@app.get("/force-start-scheduler")
+async def force_start_scheduler():
+    """Кнопка 'Последний шанс': запуск планировщика в обход всех блокировок"""
+    start_scheduler()
+    asyncio.create_task(scrape_news_task())
+    return {"message": "Scheduler forced to start regardless of locks."}
 
 @app.get("/health")
 async def health():
     return {"status": "healthy"}
 
-@app.get("/trigger-scrape")
-async def trigger_scrape(background_tasks: BackgroundTasks):
-    """
-    Вручную запустить скрапер (сбор новостей в черновики).
-    """
-    background_tasks.add_task(scrape_news_task)
-    return {"message": "Scrape task triggered in background"}
-
-@app.get("/trigger-manual")
-async def trigger_manual(background_tasks: BackgroundTasks):
-    """
-    Вручную запустить обработку одного черновика (рерайт + публикация в Telegram).
-    """
-    background_tasks.add_task(process_news_task)
-    return {"message": "Processing task triggered in background"}
-
 if __name__ == "__main__":
-    import uvicorn
     port = int(os.environ.get("PORT", "8000"))
+    import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=port)
