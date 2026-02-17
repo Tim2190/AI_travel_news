@@ -1,4 +1,5 @@
 import logging
+import re
 from telegram import Bot
 from telegram.constants import ParseMode
 from .config import settings
@@ -10,17 +11,29 @@ TELEGRAM_CAPTION_MAX_LEN = 1000
 
 
 def truncate_caption(text: str, max_len: int = TELEGRAM_CAPTION_MAX_LEN) -> str:
-    """Обрезает текст под лимит подписи Telegram. Если ИИ вышел за рамки — принудительно режем."""
-    if not text or len(text) <= max_len:
-        return text or ""
-    out = text[:max_len].rstrip()
-    # Не обрывать на полпути HTML-тега или entity
-    while out and out[-1] in ("<", "&"):
-        out = out[:-1].rstrip()
-    if len(text) > max_len:
-        logger.warning("Caption truncated from %s to %s characters.", len(text), len(out))
-    return out
+    """
+    Умная обрезка: если текст не влезает, удаляем HTML-теги, 
+    чтобы не оставить незакрытых сущностей.
+    """
+    if not text:
+        return ""
+    
+    # 1. Если текст и так влезает, просто возвращаем
+    if len(text) <= max_len:
+        return text
 
+    # 2. Если НЕ влезает — это значит ИИ выдал слишком много.
+    # Чтобы не искать незакрытые <b> или <a>, мы просто чистим текст от HTML.
+    logger.warning("Caption too long (%s chars). Stripping HTML and truncating.", len(text))
+    
+    # Удаляем все теги <...>
+    clean_text = re.sub('<[^<]+?>', '', text)
+    
+    # 3. Если после очистки всё еще длинно — режем до лимита
+    if len(clean_text) > max_len:
+        return clean_text[:max_len - 3].rstrip() + "..."
+    
+    return clean_text
 
 class TelegramPublisher:
     def __init__(self):
