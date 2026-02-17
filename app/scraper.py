@@ -41,48 +41,52 @@ DIRECT_SCRAPE_SOURCES: List[Dict] = [
         "gov_kz": False,
     },
     # --- МИНИСТЕРСТВА (GOV.KZ - SPA) ---
-    {"name": "МинНацЭкономики", "url": "...", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "economy"},
-    {"name": "МинФин", "url": "...", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "minfin"},
-    {"name": "МИД РК", "url": "...", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "mfa"},
-    {"name": "МВД РК", "url": "...", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "qriim"},
-    {"name": "МинТруда", "url": "...", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "enbek"},
-    {"name": "МинЗдрав", "url": "...", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "dsm"},
-    {"name": "МинПросвещения", "url": "...", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "edu"},
-    {"name": "МинНауки", "url": "...", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "sci"},
-    {"name": "МинПромСтрой", "url": "...", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "mps"},
-    {"name": "МинТранспорт", "url": "...", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "transport"},
-    {"name": "МинЦифры", "url": "...", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "mdai"},
-    {"name": "МинКультуры", "url": "...", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "mam"},
-    {"name": "МинТуризм", "url": "...", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "tsm"},
-    {"name": "МинЭкологии", "url": "...", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "ecogeo"},
-    {"name": "МинСельХоз", "url": "...", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "moa"},
-    {"name": "МинЭнерго", "url": "...", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "energo"},
-    {"name": "МинЮст", "url": "...", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "adilet"},
-    {"name": "МЧС РК", "url": "...", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "emer"},
-    {"name": "МинТорговли", "url": "...", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "mti"},
+    {"name": "МинНацЭкономики", "url": "https://www.gov.kz/memleket/entities/economy/press/news?lang=ru", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "economy"},
+    {"name": "МинФин", "url": "https://www.gov.kz/memleket/entities/minfin/press/news?lang=ru", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "minfin"},
+    {"name": "МИД РК", "url": "https://www.gov.kz/memleket/entities/mfa/press/news?lang=ru", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "mfa"},
+    {"name": "МВД РК", "url": "https://www.gov.kz/memleket/entities/qriim/press/news?lang=ru", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "qriim"},
+    {"name": "МинТруда", "url": "https://www.gov.kz/memleket/entities/enbek/press/news?lang=ru", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "enbek"},
+    {"name": "МинЗдрав", "url": "https://www.gov.kz/memleket/entities/dsm/press/news?lang=ru", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "dsm"},
+    {"name": "МинПросвещения", "url": "https://www.gov.kz/memleket/entities/edu/press/news?lang=ru", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "edu"},
+    {"name": "МинНауки", "url": "https://www.gov.kz/memleket/entities/sci/press/news?lang=ru", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "sci"},
+    {"name": "МинПромСтрой", "url": "https://www.gov.kz/memleket/entities/mps/press/news?lang=ru", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "mps"},
+    {"name": "МинТранспорт", "url": "https://www.gov.kz/memleket/entities/transport/press/news?lang=ru", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "transport"},
+    {"name": "МинЦифры", "url": "https://www.gov.kz/memleket/entities/mdai/press/news?lang=ru", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "mdai"},
+    {"name": "МинКультуры", "url": "https://www.gov.kz/memleket/entities/mam/press/news?lang=ru", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "mam"},
+    {"name": "МинТуризм", "url": "https://www.gov.kz/memleket/entities/tsm/press/news?lang=ru", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "tsm"},
+    {"name": "МинЭкологии", "url": "https://www.gov.kz/memleket/entities/ecogeo/press/news?lang=ru", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "ecogeo"},
+    {"name": "МинСельХоз", "url": "https://www.gov.kz/memleket/entities/moa/press/news?lang=ru", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "moa"},
+    {"name": "МинЭнерго", "url": "https://www.gov.kz/memleket/entities/energo/press/news?lang=ru", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "energo"},
+    {"name": "МинЮст", "url": "https://www.gov.kz/memleket/entities/adilet/press/news?lang=ru", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "adilet"},
+    {"name": "МЧС РК", "url": "https://www.gov.kz/memleket/entities/emer/press/news?lang=ru", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "emer"},
+    {"name": "МинТорговли", "url": "https://www.gov.kz/memleket/entities/mti/press/news?lang=ru", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "mti"},
+    
     # --- АКИМАТЫ ---
-    {"name": "Акимат Алматы", "url": "...", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "almaty"},
-    {"name": "Акимат Астаны", "url": "...", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "astana"},
+    {"name": "Акимат Алматы", "url": "https://www.gov.kz/memleket/entities/almaty/press/news?lang=ru", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "almaty"},
+    {"name": "Акимат Астаны", "url": "https://www.gov.kz/memleket/entities/astana/press/news?lang=ru", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "astana"},
 ]
 
 _gov_kz_tokens: Optional[Dict] = None
 
 async def _fetch_gov_kz_tokens() -> Optional[Dict]:
-    """Асинхронная функция получения токенов (запускается в отдельном потоке)"""
+    """Усиленная версия получения токенов с ожиданием контента"""
     if not PLAYWRIGHT_AVAILABLE:
         return None
     tokens = {}
     try:
         async with async_playwright() as p:
-            # Запускаем Chromium
-            browser = await p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"])
+            # Добавили флаг --disable-dev-shm-usage для стабильности в Docker
+            browser = await p.chromium.launch(
+                headless=True, 
+                args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
+            )
             context = await browser.new_context(
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-                viewport={"width": 1920, "height": 1080}, locale="ru-RU"
+                viewport={"width": 1920, "height": 1080},
+                locale="ru-RU"
             )
             page = await context.new_page()
             
-            # Ловушка для токенов
             def handle_request(request):
                 if "api/v1/public/content-manager/news" in request.url:
                     h = request.headers
@@ -90,20 +94,33 @@ async def _fetch_gov_kz_tokens() -> Optional[Dict]:
                         tokens["hash"] = h["hash"]
                         tokens["token"] = h["token"]
                         tokens["user-agent"] = h.get("user-agent", "")
+                        logger.info("🎯 ТОКЕНЫ ПОЙМАНЫ В ЛОВУШКУ!")
             
             page.on("request", handle_request)
             
-            # Заходим на сайт
             try:
-                await page.goto("https://www.gov.kz/memleket/entities/economy/press/news?lang=ru", timeout=60000, wait_until="domcontentloaded")
-                await page.wait_for_timeout(5000) 
-            except Exception:
-                pass 
+                logger.info("🌍 Открываем страницу-донор для токенов...")
+                # Ждем именно networkidle (когда запросы затихнут)
+                await page.goto(
+                    "https://www.gov.kz/memleket/entities/economy/press/news?lang=ru", 
+                    timeout=60000, 
+                    wait_until="networkidle" 
+                )
+                
+                # ЕСЛИ ТОКЕНЫ ЕЩЕ НЕ ПОЙМАНЫ:
+                # Ждем появления хотя бы одной ссылки на новость (это заставит JS сработать)
+                if not tokens:
+                    logger.info("⏳ Токены не пришли сразу, ждем появления новостей в DOM...")
+                    await page.wait_for_selector("a[href*='/press/news/details/']", timeout=20000)
+                    
+            except Exception as e:
+                logger.warning(f"⚠️ Playwright не дождался идеальной загрузки, но идем дальше: {e}")
             
             await browser.close()
     except Exception as e:
-        logger.error(f"Playwright error: {e}")
+        logger.error(f"❌ Фатальная ошибка Playwright: {e}")
         return None
+        
     return tokens if tokens else None
 
 def run_async_in_thread(coro):
