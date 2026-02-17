@@ -255,6 +255,30 @@ async def process_news_task():
     finally:
         db.close()
 
+def is_post_integrity_ok(final_text: str, source_url: str) -> bool:
+    """Проверяет финальный текст на критические ошибки перед публикацией."""
+    
+    # 1. Проверка на пустоту
+    if not final_text or len(final_text) < 150:
+        logger.error("integrity Check Failed: Текст слишком короткий или пустой.")
+        return False
+        
+    # 2. Проверка ссылки
+    if not source_url or "http" not in source_url:
+        logger.error("Integrity Check Failed: Отсутствует корректная ссылка на источник.")
+        return False
+        
+    # 3. Проверка структуры (должен быть заголовок и ссылка в тексте)
+    if "<b>" not in final_text:
+        logger.error("Integrity Check Failed: В тексте отсутствует заголовок (тег <b>).")
+        return False
+        
+    if "Түпнұсқа" not in final_text and "Источник" not in final_text:
+        logger.error("Integrity Check Failed: В финальном тексте не найдена ссылка на оригинал.")
+        return False
+
+    return True
+    
 def start_scheduler():
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
