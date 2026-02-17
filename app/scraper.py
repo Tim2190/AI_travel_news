@@ -74,7 +74,8 @@ async def _fetch_gov_kz_tokens() -> Optional[Dict]:
     tokens = {}
     try:
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-setuid-sandbox"])
+            # Запускаем Chromium
+            browser = await p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"])
             context = await browser.new_context(
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
                 viewport={"width": 1920, "height": 1080}, locale="ru-RU"
@@ -94,11 +95,10 @@ async def _fetch_gov_kz_tokens() -> Optional[Dict]:
             
             # Заходим на сайт
             try:
-                await page.goto("https://www.gov.kz/memleket/entities/economy/press/news?lang=ru", timeout=45000, wait_until="domcontentloaded")
-                # Ждем немного, чтобы скрипты отработали
+                await page.goto("https://www.gov.kz/memleket/entities/economy/press/news?lang=ru", timeout=60000, wait_until="domcontentloaded")
                 await page.wait_for_timeout(5000) 
             except Exception:
-                pass # Главное, чтобы успели перехватить запрос
+                pass 
             
             await browser.close()
     except Exception as e:
@@ -107,7 +107,6 @@ async def _fetch_gov_kz_tokens() -> Optional[Dict]:
     return tokens if tokens else None
 
 def run_async_in_thread(coro):
-    """Магическая функция: запускает асинхронный код в отдельном потоке, чтобы не ломать основной цикл"""
     with ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(asyncio.run, coro)
         return future.result()
@@ -119,17 +118,16 @@ class NewsScraper:
     def scrape(self) -> List[Dict]:
         all_news = []
         
-        # 1. Обычные источники (синхронно)
+        # 1. Обычные источники
         regular_sources = [s for s in self.direct_sources if not s.get("gov_kz")]
         for source in regular_sources:
             all_news.extend(self._scrape_direct_source(source))
 
-        # 2. Gov.kz источники (Playwright запускаем в потоке)
+        # 2. Gov.kz источники
         gov_sources = [s for s in self.direct_sources if s.get("gov_kz")]
         if gov_sources:
             try:
-                # ВАЖНО: Запускаем асинхронную часть в отдельном потоке!
-                # Это обходит ошибку "Event loop is already running"
+                # ВАЖНО: Запуск в потоке
                 gov_news = run_async_in_thread(self._scrape_all_gov_kz(gov_sources))
                 all_news.extend(gov_news)
             except Exception as e:
@@ -159,6 +157,7 @@ class NewsScraper:
         project = config.get("project")
         if not project: return []
 
+        # URL запроса
         api_url = f"https://www.gov.kz/api/v1/public/content-manager/news?sort-by=created_date:DESC&projects=eq:{project}&page=1&size=10"
         headers = {
             "accept": "application/json", "accept-language": "ru",
@@ -171,11 +170,24 @@ class NewsScraper:
         try:
             logger.info(f"API запрос: {name}...")
             resp = requests.get(api_url, headers=headers, timeout=15, verify=False)
+            
             if resp.status_code == 200:
-                items = resp.json().get("content", [])
+                data = resp.json()
+                
+                # --- ИСПРАВЛЕНИЕ 1: Проверяем, список это или словарь ---
+                if isinstance(data, list):
+                    items = data
+                else:
+                    items = data.get("content", [])
+
                 for item in items:
-                    title = item.get("name")
+                    # --- ИСПРАВЛЕНИЕ 2: Ищем title ИЛИ name ---
+                    title = item.get("title") or item.get("name")
+                    if title:
+                        title = title.strip()
+                        
                     slug_id = item.get("id")
+                    
                     if title and slug_id:
                         link = f"https://www.gov.kz/memleket/entities/{project}/press/news/details/{slug_id}?lang=ru"
                         
@@ -241,18 +253,30 @@ class NewsScraper:
             img = soup.find("meta", property="og:image")
             image_url = img.get("content") if img else None
             
-            # Попытка найти дату
             pub_date = self._extract_publish_date(soup)
             return text, image_url, pub_date
         except:
             return None, None, None
 
     def _extract_publish_date(self, soup):
-        # ... (Твоя функция парсинга даты без изменений) ...
+        for prop in ("article:published_time", "published_time", "date"):
+            meta = soup.find("meta", property=prop) or soup.find("meta", attrs={"name": prop})
+            if meta and meta.get("content"):
+                return self._parse_date(meta["content"])
+        time_el = soup.find("time", attrs={"datetime": True})
+        if time_el and time_el.get("datetime"):
+            return self._parse_date(time_el["datetime"])
         return datetime.now() 
 
     def _parse_date(self, value):
-        # ... (Твоя функция парсинга даты без изменений) ...
+        if not value: return datetime.now()
+        value = str(value).strip()[:25]
+        for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+            try:
+                if value.endswith("Z"): value = value[:-1] + "+00:00"
+                d = datetime.fromisoformat(value.replace("Z", "+00:00")) if "+" in value else datetime.strptime(value[:10], "%Y-%m-%d")
+                return d.astimezone(timezone.utc).replace(tzinfo=None)
+            except: continue
         return datetime.now()
 
 scraper = NewsScraper()
