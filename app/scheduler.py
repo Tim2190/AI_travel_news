@@ -66,19 +66,27 @@ async def scrape_news_task():
             logger.warning("No news matching topic keywords.")
             return
 
-        # Проверка актуальности (по дате)
+        # --- ЖЕСТКАЯ ПРОВЕРКА АКТУАЛЬНОСТИ ---
         cutoff = datetime.utcnow() - timedelta(days=settings.NEWS_MAX_AGE_DAYS)
         def is_recent(item):
             pub = item.get("published_at")
+            
+            # ИСПРАВЛЕНО: Если даты нет — считаем новость подозрительной и НЕ берем
             if pub is None:
-                return True 
+                logger.warning(f"Rejected (no date): {item.get('title', 'Unknown')[:50]}...")
+                return False
+                
             if getattr(pub, "tzinfo", None):
                 pub = pub.replace(tzinfo=None)
-            return pub >= cutoff
+            
+            check_ok = pub >= cutoff
+            if not check_ok:
+                logger.info(f"Skipped (outdated, from {pub}): {item.get('title')[:50]}...")
+            return check_ok
         
         new_items = [i for i in new_items if is_recent(i)]
         if not new_items:
-            logger.warning("No recent news found.")
+            logger.warning("No recent news found after filtering dates.")
             return
 
         # Сортировка и скоринг (приоритет важным темам)
