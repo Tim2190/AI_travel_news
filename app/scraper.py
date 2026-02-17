@@ -60,7 +60,6 @@ DIRECT_SCRAPE_SOURCES: List[Dict] = [
     {"name": "МинЮст", "url": "https://www.gov.kz/memleket/entities/adilet/press/news?lang=ru", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "adilet"},
     {"name": "МЧС РК", "url": "https://www.gov.kz/memleket/entities/emer/press/news?lang=ru", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "emer"},
     {"name": "МинТорговли", "url": "https://www.gov.kz/memleket/entities/mti/press/news?lang=ru", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "mti"},
-    
     # --- АКИМАТЫ ---
     {"name": "Акимат Алматы", "url": "https://www.gov.kz/memleket/entities/almaty/press/news?lang=ru", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "almaty"},
     {"name": "Акимат Астаны", "url": "https://www.gov.kz/memleket/entities/astana/press/news?lang=ru", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "astana"},
@@ -75,7 +74,6 @@ async def _fetch_gov_kz_tokens() -> Optional[Dict]:
     tokens = {}
     try:
         async with async_playwright() as p:
-            # Добавили флаг --disable-dev-shm-usage для стабильности в Docker
             browser = await p.chromium.launch(
                 headless=True, 
                 args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
@@ -94,27 +92,20 @@ async def _fetch_gov_kz_tokens() -> Optional[Dict]:
                         tokens["hash"] = h["hash"]
                         tokens["token"] = h["token"]
                         tokens["user-agent"] = h.get("user-agent", "")
-                        logger.info("🎯 ТОКЕНЫ ПОЙМАНЫ В ЛОВУШКУ!")
-            
+                        logger.info("🎯 ТОКЕНЫ ПОЙМАНЫ!")
+
             page.on("request", handle_request)
             
             try:
-                logger.info("🌍 Открываем страницу-донор для токенов...")
-                # Ждем именно networkidle (когда запросы затихнут)
-                await page.goto(
-                    "https://www.gov.kz/memleket/entities/economy/press/news?lang=ru", 
-                    timeout=60000, 
-                    wait_until="networkidle" 
-                )
+                logger.info("🌍 Открываем МИД РК (он обычно стабильнее) за токенами...")
+                # Используем МИД как донор, если Экономика тормозит
+                await page.goto("https://www.gov.kz/memleket/entities/mfa/press/news?lang=ru", timeout=60000, wait_until="networkidle")
                 
-                # ЕСЛИ ТОКЕНЫ ЕЩЕ НЕ ПОЙМАНЫ:
-                # Ждем появления хотя бы одной ссылки на новость (это заставит JS сработать)
                 if not tokens:
-                    logger.info("⏳ Токены не пришли сразу, ждем появления новостей в DOM...")
+                    logger.info("⏳ Токены не пришли, ждем появления контента...")
                     await page.wait_for_selector("a[href*='/press/news/details/']", timeout=20000)
-                    
             except Exception as e:
-                logger.warning(f"⚠️ Playwright не дождался идеальной загрузки, но идем дальше: {e}")
+                logger.warning(f"⚠️ Playwright не дождался идеальной загрузки: {e}")
             
             await browser.close()
     except Exception as e:
@@ -134,17 +125,13 @@ class NewsScraper:
 
     def scrape(self) -> List[Dict]:
         all_news = []
-        
-        # 1. Обычные источники
         regular_sources = [s for s in self.direct_sources if not s.get("gov_kz")]
         for source in regular_sources:
             all_news.extend(self._scrape_direct_source(source))
 
-        # 2. Gov.kz источники
         gov_sources = [s for s in self.direct_sources if s.get("gov_kz")]
         if gov_sources:
             try:
-                # ВАЖНО: Запуск в потоке
                 gov_news = run_async_in_thread(self._scrape_all_gov_kz(gov_sources))
                 all_news.extend(gov_news)
             except Exception as e:
@@ -156,11 +143,11 @@ class NewsScraper:
     async def _scrape_all_gov_kz(self, sources: List[Dict]) -> List[Dict]:
         global _gov_kz_tokens
         if _gov_kz_tokens is None:
-            logger.info("🔑 Получаем токены gov.kz (в потоке)...")
+            logger.info("🔑 Получаем токены gov.kz...")
             _gov_kz_tokens = await _fetch_gov_kz_tokens()
 
         if not _gov_kz_tokens:
-            logger.error("Нет токенов gov.kz")
+            logger.error("Не удалось получить токены gov.kz")
             return []
 
         all_news = []
@@ -169,52 +156,36 @@ class NewsScraper:
         return all_news
 
     def _scrape_gov_kz_source(self, config: Dict, tokens: Dict) -> List[Dict]:
-        """API запрос (синхронный requests)"""
         name = config.get("name", "Unknown")
         project = config.get("project")
         if not project: return []
 
-        # URL запроса
         api_url = f"https://www.gov.kz/api/v1/public/content-manager/news?sort-by=created_date:DESC&projects=eq:{project}&page=1&size=10"
         headers = {
-            "accept": "application/json", "accept-language": "ru",
+            "accept": "application/json", 
+            "accept-language": "ru",
             "user-agent": tokens.get("user-agent", "Mozilla/5.0"),
             "referer": f"https://www.gov.kz/memleket/entities/{project}/press/news?lang=ru",
-            "hash": tokens["hash"], "token": tokens["token"],
+            "hash": tokens["hash"], 
+            "token": tokens["token"],
         }
         
         news = []
         try:
             logger.info(f"API запрос: {name}...")
             resp = requests.get(api_url, headers=headers, timeout=15, verify=False)
-            
             if resp.status_code == 200:
                 data = resp.json()
-                
-                # --- ИСПРАВЛЕНИЕ 1: Проверяем, список это или словарь ---
-                if isinstance(data, list):
-                    items = data
-                else:
-                    items = data.get("content", [])
-
+                items = data if isinstance(data, list) else data.get("content", [])
                 for item in items:
-                    # --- ИСПРАВЛЕНИЕ 2: Ищем title ИЛИ name ---
                     title = item.get("title") or item.get("name")
-                    if title:
-                        title = title.strip()
-                        
                     slug_id = item.get("id")
-                    
                     if title and slug_id:
+                        title = title.strip()
                         link = f"https://www.gov.kz/memleket/entities/{project}/press/news/details/{slug_id}?lang=ru"
-                        
-                        # Парсим дату API
                         raw_date = item.get("createdDate") or item.get("publishedDate")
-                        pub_date = self._parse_date(str(raw_date)) if raw_date else datetime.now()
-
-                        # Текст берем из функции (полный парсинг)
+                        pub_date = self._parse_date(str(raw_date))
                         full_text, image, _ = self._fetch_full_text_and_image(link)
-                        
                         news.append({
                             "title": title, "original_text": full_text or title,
                             "source_name": name, "source_url": link,
@@ -225,7 +196,6 @@ class NewsScraper:
         return news
 
     def _scrape_direct_source(self, config: Dict) -> List[Dict]:
-        """Парсинг обычных HTML сайтов"""
         name = config.get("name", "Unknown")
         url = config.get("url")
         if not url: return []
@@ -233,22 +203,28 @@ class NewsScraper:
         news = []
         try:
             logger.info(f"Direct scraping {name}...")
-            headers = {"User-Agent": "Mozilla/5.0"}
-            resp = requests.get(url, headers=headers, timeout=15, verify=False)
-            soup = BeautifulSoup(resp.content, "html.parser")
+            # Используем жирный User-Agent для Акорды
+            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/121.0.0.0"}
+            resp = requests.get(url, headers=headers, timeout=20, verify=False)
             
+            logger.info(f"[{name}] Response Status: {resp.status_code}")
+            
+            if resp.status_code != 200:
+                return []
+
+            soup = BeautifulSoup(resp.content, "html.parser")
             articles = soup.select(config.get("article_selector"))[:10]
+            logger.info(f"[{name}] Found {len(articles)} articles.")
+
             for art in articles:
                 title_el = art.select_one(config.get("title_selector"))
                 link_el = art.select_one(config.get("link_selector", "a"))
-                
                 if title_el:
                     title = title_el.get_text(strip=True)
-                    href = link_el.get("href") if link_el else title_el.get("href")
+                    href = link_el.get("href") if link_el else None
                     if href:
                         base = config.get("base_url", "")
                         link = base + href if href.startswith("/") else href
-                        
                         full_text, image, pub_date = self._fetch_full_text_and_image(link)
                         news.append({
                             "title": title, "original_text": full_text or title,
@@ -259,34 +235,29 @@ class NewsScraper:
             logger.error(f"Error {name}: {e}")
         return news
 
-    def _fetch_full_text_and_image(self, url):
+    def _fetch_full_text_and_image(self, url: str):
         try:
             resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15, verify=False)
-            if resp.status_code != 200: return None, None, None
+            if resp.status_code != 200: return None, None, datetime.now()
             soup = BeautifulSoup(resp.content, "html.parser")
             paragraphs = soup.find_all("p")
             text = "\n".join([p.get_text(strip=True) for p in paragraphs if len(p.get_text()) > 50])
-            
             img = soup.find("meta", property="og:image")
             image_url = img.get("content") if img else None
-            
             pub_date = self._extract_publish_date(soup)
             return text, image_url, pub_date
         except:
-            return None, None, None
+            return None, None, datetime.now()
 
-    def _extract_publish_date(self, soup):
+    def _extract_publish_date(self, soup: BeautifulSoup):
         for prop in ("article:published_time", "published_time", "date"):
             meta = soup.find("meta", property=prop) or soup.find("meta", attrs={"name": prop})
             if meta and meta.get("content"):
                 return self._parse_date(meta["content"])
-        time_el = soup.find("time", attrs={"datetime": True})
-        if time_el and time_el.get("datetime"):
-            return self._parse_date(time_el["datetime"])
-        return datetime.now() 
+        return datetime.now()
 
-    def _parse_date(self, value):
-        if not value: return datetime.now()
+    def _parse_date(self, value: str):
+        if not value or value == "None": return datetime.now()
         value = str(value).strip()[:25]
         for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
             try:
