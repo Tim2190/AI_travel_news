@@ -1,14 +1,15 @@
-# Берем готовый образ, где уже есть Python + Playwright + Chrome + Все драйверы
-FROM mcr.microsoft.com/playwright/python:v1.40.0-jammy
+# Обновляем версию до v1.58.0-jammy, как просит ошибка
+FROM mcr.microsoft.com/playwright/python:v1.58.0-jammy
 
-# Папка внутри сервера
 WORKDIR /app
 
-# Копируем твои файлы
 COPY . .
 
-# Ставим библиотеки (FastAPI, SQLAlchemy и т.д.)
+# Устанавливаем зависимости
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Запускаем бота
+# На всякий случай убеждаемся, что браузеры точно стоят (для новой версии)
+RUN playwright install chromium
+RUN playwright install-deps
+
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
