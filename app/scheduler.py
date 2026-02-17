@@ -5,7 +5,7 @@ import re
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from difflib import SequenceMatcher  # <--- СОХРАНЕНО
+from difflib import SequenceMatcher
 from .database import SessionLocal, NewsArchive, NewsStatus
 from .scraper import scraper
 from .rewriter import rewriter
@@ -33,6 +33,7 @@ def is_fuzzy_duplicate(new_title: str, existing_titles: list, threshold=0.65) ->
 def is_text_kazakh(text: str) -> bool:
     """Определяет язык текста для выбора правильного лимита."""
     if not text: return False
+    # Расширенный набор символов казахского алфавита
     kz_chars = r'[әіңғүұқөһӘІҢҒҮҰҚӨҺ]'
     return bool(re.search(kz_chars, text))
 
@@ -41,7 +42,6 @@ def is_text_kazakh(text: str) -> bool:
 async def scrape_news_task():
     """
     Scrape news, select up to 5 best items and store as drafts.
-    Runs every SCRAPE_INTERVAL_MINUTES.
     """
     db = SessionLocal()
     try:
@@ -51,7 +51,7 @@ async def scrape_news_task():
             logger.warning("No news found from any direct sources.")
             return
 
-        # Только по заданной тематике
+        # Фильтрация по ключевым словам
         topic_keywords = [k.strip().lower() for k in settings.TOPIC_KEYWORDS.split(",") if k.strip()]
         def matches_topic(item):
             if not topic_keywords:
@@ -66,7 +66,7 @@ async def scrape_news_task():
             logger.warning("No news matching topic keywords.")
             return
 
-        # Только актуальные
+        # Проверка актуальности (по дате)
         cutoff = datetime.utcnow() - timedelta(days=settings.NEWS_MAX_AGE_DAYS)
         def is_recent(item):
             pub = item.get("published_at")
@@ -78,46 +78,45 @@ async def scrape_news_task():
         
         new_items = [i for i in new_items if is_recent(i)]
         if not new_items:
-            logger.warning("No recent news (all older than %s days).", settings.NEWS_MAX_AGE_DAYS)
+            logger.warning("No recent news found.")
             return
 
-        new_items = new_items[:30]
-
+        # Сортировка и скоринг (приоритет важным темам)
         def normalize_title(title):
-            if not title:
-                return ""
+            if not title: return ""
             return re.sub(r"\s+", " ", title.strip().lower())[:500]
 
         def score(item):
             text = (item.get("original_text") or "").lower()
             title = (item.get("title") or "").lower()
             base = min(len(text) / 500, 3) 
-            keywords = ["экономика", "финансы", "банк", "инфляция", "рынок", "валюта", "инвестиции"]
-            kw_score = sum(1 for k in keywords if k in text or k in title)
-            region_keywords = ["казахстан", "россия", "узбекистан", "снг", "алматы", "астана", "москва", "ташкент"]
-            region_score = sum(1 for k in region_keywords if k in text or k in title)
-            return base + kw_score + region_score
+            keywords = ["экономика", "финансы", "инвестиции", "президент", "закон", "правительство"]
+            kw_score = sum(2 for k in keywords if k in text or k in title)
+            return base + kw_score
 
         scored = sorted(new_items, key=score, reverse=True)
-        top_items = scored[:5]
+        top_items = scored[:10] # Берем с запасом для проверки дублей
 
-        # === ЗАГРУЗКА ИСТОРИИ ДЛЯ FUZZY MATCHING ===
+        # Загрузка истории для защиты от повторов
         check_date = datetime.utcnow() - timedelta(days=3)
         recent_records = db.query(NewsArchive.title).filter(NewsArchive.created_at >= check_date).all()
         existing_titles_cache = [row[0] for row in recent_records if row[0]]
 
         added_count = 0
         for item in top_items:
-            current_title = item["title"]
+            if added_count >= 5: break # Лимит на один цикл сбора
 
-            url_exists = db.query(NewsArchive).filter(NewsArchive.source_url == item["source_url"]).first()
-            if url_exists:
+            current_title = item["title"]
+            # Проверка по URL
+            if db.query(NewsArchive).filter(NewsArchive.source_url == item["source_url"]).first():
                 continue
 
+            # Проверка по нормализованному заголовку
             norm = normalize_title(current_title)
             if norm and db.query(NewsArchive).filter(NewsArchive.normalized_title == norm).first():
                 continue
 
+            # Fuzzy matching
             if is_fuzzy_duplicate(current_title, existing_titles_cache, threshold=0.65):
                 logger.info(f"Skipping fuzzy duplicate: '{current_title}'")
                 continue
@@ -137,7 +136,7 @@ async def scrape_news_task():
             existing_titles_cache.append(current_title)
 
         db.commit()
-        logger.info(f"Successfully added {added_count} prioritized news items.")
+        logger.info(f"Successfully added {added_count} prioritized news items to drafts.")
     except Exception as e:
         logger.error(f"Error in scrape_news_task: {str(e)}")
     finally:
@@ -145,9 +144,8 @@ async def scrape_news_task():
 
 async def process_news_task():
     """
-    Умная обработка очереди:
-    - KZ: 1 раз в час (макс 20/день)
-    - RU: каждые 15 мин (макс 40/день)
+    Обработка очереди публикаций. 
+    ИСПРАВЛЕНО: Бот больше не зависает, если нет новостей на выбранном языке.
     """
     db = SessionLocal()
     try:
@@ -160,42 +158,38 @@ async def process_news_task():
             NewsArchive.published_at >= today_start
         ).all()
 
-        kz_count = 0
-        ru_count = 0
-        last_kz_pub_time = datetime.min
+        kz_count = sum(1 for p in published_today if is_text_kazakh(p.rewritten_text or p.title))
+        ru_count = len(published_today) - kz_count
 
+        # Ищем время последней KZ публикации
+        last_kz_pub_time = datetime.min
         for p in published_today:
             if is_text_kazakh(p.rewritten_text or p.title):
-                kz_count += 1
-                if p.published_at > last_kz_pub_time:
+                if p.published_at and p.published_at > last_kz_pub_time:
                     last_kz_pub_time = p.published_at
-            else:
-                ru_count += 1
 
         logger.info(f"Today's stats: KZ {kz_count}/20, RU {ru_count}/40")
 
-        # 2. ВЫБОР ЦЕЛЕВОГО ЯЗЫКА
-        target_lang = None
+        # 2. ОПРЕДЕЛЕНИЕ ПРИОРИТЕТНОГО ЯЗЫКА
+        target_lang = "RU"
         time_since_kz = datetime.utcnow() - last_kz_pub_time
         
-        # Если прошел час и лимит KZ не исчерпан
+        # Если прошел час и лимит KZ не исчерпан — приоритет KZ
         if kz_count < 20 and time_since_kz >= timedelta(hours=1):
             target_lang = "KZ"
-            logger.info("Target: Kazakh (Hour interval reached)")
-        elif ru_count < 40:
-            target_lang = "RU"
-            logger.info("Target: Russian (Standard interval)")
-        else:
-            logger.info("All daily limits reached. Sleeping.")
-            return
+            logger.info("Priority target: Kazakh (Hour interval reached)")
 
-        # 3. ПОИСК ПОДХОДЯЩЕГО ЧЕРНОВИКА
+        # 3. ПОИСК ЧЕРНОВИКА
         drafts = db.query(NewsArchive).filter(
-            NewsArchive.status == NewsStatus.draft.value,
-            NewsArchive.telegram_post_id == None
+            NewsArchive.status == NewsStatus.draft.value
         ).order_by(NewsArchive.created_at.asc()).all()
 
+        if not drafts:
+            logger.info("No drafts available in database.")
+            return
+
         selected = None
+        # Сначала пытаемся найти новость на целевом языке
         for d in drafts:
             is_kz = is_text_kazakh(d.original_text)
             if target_lang == "KZ" and is_kz:
@@ -205,17 +199,14 @@ async def process_news_task():
                 selected = d
                 break
         
-        # Если для KZ черновика нет, а время пришло — пробуем взять RU, чтобы не простаивать
-        if not selected and target_lang == "KZ" and ru_count < 40:
-            selected = next((d for d in drafts if not is_text_kazakh(d.original_text)), None)
-
+        # FALLBACK: Если на целевом языке ничего нет, берем ПЕРВУЮ ЛЮБУЮ новость из очереди
         if not selected:
-            logger.info(f"No drafts found for {target_lang} language.")
-            return
+            logger.info(f"No drafts found for {target_lang}. Taking first available draft to avoid idle time.")
+            selected = drafts[0]
 
-        # 4. ПРОЦЕССИНГ
+        # 4. РЕРАЙТ И ПУБЛИКАЦИЯ
         try:
-            db.expire_all()
+            # Обновляем объект из базы, чтобы избежать проблем с сессией
             selected = db.merge(selected)
             logger.info(f"--- Processing: {selected.title} ---")
             
@@ -225,19 +216,26 @@ async def process_news_task():
                 db.commit()
                 return
             
-            selected.rewritten_text = rewritten
-            db.commit()
-
+            # ФОРМАТИРОВАНИЕ И ДОБАВЛЕНИЕ ДИСКЛЕЙМЕРА
             safe_url = html.escape(selected.source_url, quote=True)
-            final_text = f"{selected.rewritten_text}\n\n<a href=\"{safe_url}\">Түпнұсқа</a>"
+            disclaimer = "\n\n<i>⚠️ Сообщение создано ИИ. Проверяйте информацию по ссылке ниже.</i>"
+            source_link = f"\n\n<a href=\"{safe_url}\">🌐 Түпнұсқа / Источник</a>"
             
+            # Собираем финальный текст
+            final_text = f"{rewritten}{disclaimer}{source_link}"
+            
+            # Публикация
             post_id = await publisher.publish(final_text, selected.image_url)
             
-            selected.telegram_post_id = str(post_id)
-            selected.status = NewsStatus.published.value
-            selected.published_at = datetime.utcnow()
-            db.commit()
-            logger.info(f"Successfully published ID {selected.id}. Post ID: {post_id}")
+            if post_id:
+                selected.telegram_post_id = str(post_id)
+                selected.status = NewsStatus.published.value
+                selected.published_at = datetime.utcnow()
+                selected.rewritten_text = rewritten
+                db.commit()
+                logger.info(f"Successfully published ID {selected.id}. Post ID: {post_id}")
+            else:
+                raise Exception("Publisher returned empty post_id")
             
         except Exception as e:
             logger.error(f"Error in publishing {selected.id}: {str(e)}")
@@ -251,12 +249,16 @@ async def process_news_task():
 
 def start_scheduler():
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
-    from .config import settings
 
     scheduler = AsyncIOScheduler()
+    
+    # Сбор новостей (интервал из конфига, например 20 мин)
     scheduler.add_job(scrape_news_task, 'interval', minutes=settings.SCRAPE_INTERVAL_MINUTES)
+    
+    # Публикация (интервал из конфига, например 5 или 15 мин)
     scheduler.add_job(process_news_task, 'interval', minutes=settings.PUBLISH_INTERVAL_MINUTES)
     
+    # Пинг самого себя для предотвращения сна на Koyeb
     def ping_self():
         try:
             requests.get("http://127.0.0.1:8000/health", timeout=5)
@@ -265,5 +267,7 @@ def start_scheduler():
             logger.warning(f"Keepalive ping failed: {e}")
             
     scheduler.add_job(ping_self, 'interval', minutes=4)
+    
     scheduler.start()
+    logger.info("APScheduler started successfully.")
     return scheduler
