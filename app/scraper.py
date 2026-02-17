@@ -68,7 +68,7 @@ DIRECT_SCRAPE_SOURCES: List[Dict] = [
 _gov_kz_tokens: Optional[Dict] = None
 
 async def _fetch_gov_kz_tokens() -> Optional[Dict]:
-    """Усиленная версия получения токенов с ожиданием контента"""
+    """Усиленная версия получения токенов с ожиданием контента и имитацией активности"""
     if not PLAYWRIGHT_AVAILABLE:
         return None
     tokens = {}
@@ -97,13 +97,19 @@ async def _fetch_gov_kz_tokens() -> Optional[Dict]:
             page.on("request", handle_request)
             
             try:
-                logger.info("🌍 Открываем МИД РК (он обычно стабильнее) за токенами...")
-                # Используем МИД как донор, если Экономика тормозит
-                await page.goto("https://www.gov.kz/memleket/entities/mfa/press/news?lang=ru", timeout=60000, wait_until="networkidle")
+                logger.info("🌍 Открываем МИД РК (он стабильнее) за токенами...")
+                # Увеличили таймаут для медленного облачного интернета
+                await page.goto("https://www.gov.kz/memleket/entities/mfa/press/news?lang=ru", timeout=90000, wait_until="networkidle")
+                
+                # Даем JS 15 секунд на выполнение всех фоновых запросов
+                await asyncio.sleep(15)
                 
                 if not tokens:
-                    logger.info("⏳ Токены не пришли, ждем появления контента...")
-                    await page.wait_for_selector("a[href*='/press/news/details/']", timeout=20000)
+                    logger.info("⏳ Токены не пойманы автоматически, имитируем активность (скролл)...")
+                    await page.mouse.wheel(0, 500)
+                    await asyncio.sleep(5)
+                    # Если всё еще нет, ждем селектор как последний шанс
+                    await page.wait_for_selector("a[href*='/press/news/details/']", timeout=15000)
             except Exception as e:
                 logger.warning(f"⚠️ Playwright не дождался идеальной загрузки: {e}")
             
@@ -203,25 +209,36 @@ class NewsScraper:
         news = []
         try:
             logger.info(f"Direct scraping {name}...")
-            # Используем жирный User-Agent для Акорды
-            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/121.0.0.0"}
-            resp = requests.get(url, headers=headers, timeout=20, verify=False)
+            # Улучшенные заголовки для обхода простых блокировок
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                "Referer": "https://www.google.com/"
+            }
+            resp = requests.get(url, headers=headers, timeout=25, verify=False)
             
             logger.info(f"[{name}] Response Status: {resp.status_code}")
             
             if resp.status_code != 200:
+                logger.warning(f"[{name}] Не удалось загрузить страницу (код {resp.status_code})")
                 return []
 
             soup = BeautifulSoup(resp.content, "html.parser")
             articles = soup.select(config.get("article_selector"))[:10]
-            logger.info(f"[{name}] Found {len(articles)} articles.")
+            
+            # ДИАГНОСТИКА: Если контент не найден, смотрим заголовок страницы
+            if not articles:
+                page_title = soup.title.string if soup.title else "Заголовок не найден"
+                logger.warning(f"[{name}] Статей по селектору не найдено. Заголовок страницы: {page_title}")
+            else:
+                logger.info(f"[{name}] Найдено {len(articles)} элементов.")
 
             for art in articles:
                 title_el = art.select_one(config.get("title_selector"))
                 link_el = art.select_one(config.get("link_selector", "a"))
                 if title_el:
                     title = title_el.get_text(strip=True)
-                    href = link_el.get("href") if link_el else None
+                    href = link_el.get("href") if link_el else title_el.get("href")
                     if href:
                         base = config.get("base_url", "")
                         link = base + href if href.startswith("/") else href
