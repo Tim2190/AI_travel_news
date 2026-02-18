@@ -11,5 +11,5 @@ pydantic>=2.8.2
 pydantic-settings>=2.4.0
 apscheduler==3.10.4
 groq
-google-generativeai
+google-genai
 playwright
