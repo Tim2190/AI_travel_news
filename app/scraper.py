@@ -21,26 +21,6 @@ logger = logging.getLogger(__name__)
 
 # ИСТОЧНИКИ: ОФИЦИАЛЬНЫЕ САЙТЫ ГОСУДАРСТВЕННЫХ ОРГАНОВ (РУССКИЕ ВЕРСИИ)
 DIRECT_SCRAPE_SOURCES: List[Dict] = [
-    # --- ВЫСШЕЕ РУКОВОДСТВО (обычный BS4 парсинг, не SPA) ---
-    {
-        "name": "Akorda (Президент)",
-        "url": "https://www.akorda.kz/ru/events",
-        "article_selector": ".event-item, .news-list__item",
-        "title_selector": "h3 a, .title a, a",
-        "link_selector": "h3 a, .title a, a",
-        "base_url": "https://www.akorda.kz",
-        "gov_kz": False,
-    },
-    {
-        "name": "PrimeMinister (Правительство)",
-        "url": "https://primeminister.kz/ru/news",
-        "article_selector": ".news_item, .card, .post-item",
-        "title_selector": ".news_title a, .card-title a, a",
-        "link_selector": "a",
-        "base_url": "https://primeminister.kz",
-        "gov_kz": False,
-    },
-
     # --- МИНИСТЕРСТВА (GOV.KZ - SPA, гибридный метод) ---
     {
         "name": "МинНацЭкономики",
@@ -243,9 +223,11 @@ async def _fetch_gov_kz_tokens() -> Optional[Dict]:
                 wait_until="domcontentloaded",
                 timeout=60000,
             )
+            
+            # Увеличенный timeout — иногда gov.kz тормозит
             await page.wait_for_selector(
                 "a[href*='/press/news/details/']",
-                timeout=30000,
+                timeout=45000,  # было 30000
             )
             await browser.close()
 
@@ -306,12 +288,17 @@ class NewsScraper:
 
         if _gov_kz_tokens is None:
             logger.info("🔑 Получаем токены gov.kz через Playwright...")
-            _gov_kz_tokens = await _fetch_gov_kz_tokens()
+            try:
+                _gov_kz_tokens = await _fetch_gov_kz_tokens()
+            except Exception as e:
+                logger.error(f"Критическая ошибка получения токенов: {e}", exc_info=True)
+                _gov_kz_tokens = None
 
         if not _gov_kz_tokens:
             logger.error("Не удалось получить токены gov.kz — пропускаем все gov.kz источники")
             return []
 
+        logger.info("✅ Токены готовы, начинаем сбор новостей с gov.kz источников")
         all_news = []
         for source in sources:
             news = self._scrape_gov_kz_source(source, _gov_kz_tokens)
