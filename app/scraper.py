@@ -27,7 +27,7 @@ MONTHS_KZ = {
     "шіл": 7, "там": 8, "қыр": 9, "қаз": 10, "қар": 11, "жел": 12
 }
 
-# 1. Прямые источники (Akorda, PrimeMinister) - парсим HTML
+# 1. Прямые источники
 DIRECT_SOURCES = [
     {
         "name": "Akorda (Президент)",
@@ -47,7 +47,7 @@ DIRECT_SOURCES = [
     }
 ]
 
-# 2. GOV.KZ (Все министерства и акиматы) - используем API ID
+# 2. GOV.KZ (API ID)
 GOV_KZ_PROJECTS = {
     "МинНацЭкономики": 4, "МинФин": 2, "МИД РК": 6, "МВД РК": 11,
     "МинТруда": 21, "МинЗдрав": 17, "МинПросвещения": 14, "МинНауки": 15,
@@ -60,86 +60,65 @@ class Scraper:
     def __init__(self):
         self.session = requests.Session()
         self.session.headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36",
             "Accept": "application/json, text/html, */*"
         })
 
     def parse_date(self, date_str: str) -> Optional[datetime]:
-        """Универсальный парсер даты (ISO + Текст)."""
-        if not date_str:
-            return None
-        
+        """Парсер даты."""
+        if not date_str: return None
         date_str = str(date_str).strip().lower()
 
-        # 1. Попытка распарсить ISO (из API Gov.kz)
         try:
             iso_clean = date_str.split("+")[0].split(".")[0].replace("z", "")
-            if "t" in iso_clean:
-                return datetime.fromisoformat(iso_clean)
-            if len(iso_clean) == 10 and "-" in iso_clean:
-                return datetime.strptime(iso_clean, "%Y-%m-%d")
+            if "t" in iso_clean: return datetime.fromisoformat(iso_clean)
+            if len(iso_clean) == 10 and "-" in iso_clean: return datetime.strptime(iso_clean, "%Y-%m-%d")
         except: pass
 
-        # 2. Попытка распарсить текстовую дату (из HTML)
-        # Очищаем от мусора, но оставляем точки для формата 18.02.2026
         clean_text = re.sub(r"\s+\d{1,2}:\d{2}.*", "", date_str) 
         clean_text = re.sub(r"[^\w\s\.]", "", clean_text)
         
-        # Если формат через точки (18.02.2026)
         if "." in clean_text:
-            try:
-                return datetime.strptime(clean_text, "%d.%m.%Y")
+            try: return datetime.strptime(clean_text, "%d.%m.%Y")
             except: pass
 
-        # Если формат текстом (18 февраля 2026)
         parts = clean_text.split()
         if len(parts) >= 2:
             try:
                 day = int(re.sub(r"\D", "", parts[0]))
                 month_str = parts[1]
-                year = datetime.now().year 
-                
-                if len(parts) > 2 and parts[2].isdigit():
-                    possible_year = int(parts[2])
-                    if 2020 < possible_year < 2030:
-                        year = possible_year
-
                 month = MONTHS_RU.get(month_str) or MONTHS_KZ.get(month_str)
-                if month:
-                    return datetime(year, month, day)
+                year = datetime.now().year
+                if len(parts) > 2 and parts[2].isdigit():
+                    year = int(parts[2])
+                    if 2020 < year < 2030: year = year
+                if month: return datetime(year, month, day)
             except: pass
-            
         return None
 
     def find_date_in_text(self, text: str) -> Optional[datetime]:
-        """Ищет дату прямо в начале текста новости."""
+        """Ищет дату в начале текста."""
         if not text: return None
+        head = text[:500] # Берем побольше, 500 символов
         
-        # Берем первые 300 символов (заголовок + дата обычно в начале)
-        head = text[:300]
-        
-        # 1. Ищем паттерн "18.02.2026"
         match_dots = re.search(r"\d{2}\.\d{2}\.\d{4}", head)
-        if match_dots:
-            return self.parse_date(match_dots.group(0))
+        if match_dots: return self.parse_date(match_dots.group(0))
 
-        # 2. Ищем паттерн "18 февраля 2026" или "18 ақпан 2026"
         match_text = re.search(r"\d{1,2}\s+[а-яА-Яәіңғүұқөһ]{3,}\s+\d{4}", head)
-        if match_text:
-            return self.parse_date(match_text.group(0))
-            
+        if match_text: return self.parse_date(match_text.group(0))
         return None
 
     def scrape(self) -> List[Dict]:
         """Главный метод запуска."""
+        logger.warning("🏁 STARTING FULL SCRAPE CYCLE...") # WARNING чтобы точно было видно в логах
         all_news = []
         all_news.extend(self.scrape_gov_kz_api())
         for source in DIRECT_SOURCES:
             all_news.extend(self.scrape_direct(source))
+        logger.warning(f"✅ CYCLE FINISHED. Total items found: {len(all_news)}")
         return all_news
 
     def scrape_gov_kz_api(self) -> List[Dict]:
-        """Сбор новостей через официальное API Gov.kz"""
         results = []
         base_api = "https://gov.kz/api/v1/public/news"
         
@@ -156,21 +135,22 @@ class Scraper:
                         title = item.get("title")
                         if not title: continue
 
-                        # 1. Сначала пробуем дату из API
+                        # 1. Дата из API
                         pub_date = self.parse_date(item.get("publish_date") or item.get("created_date"))
 
-                        # Получаем текст
+                        # 2. Текст (ВСЕ ТЕГИ, а не только p)
                         body = item.get("body") or ""
                         soup = BeautifulSoup(body, "html.parser")
                         text = soup.get_text(separator="\n").strip()
 
-                        # 2. ЕСЛИ API ВЕРНУЛ ПУСТОТУ -> ИЩЕМ В ТЕКСТЕ
+                        # 3. Дата из текста (если API пустое)
                         if not pub_date:
                             pub_date = self.find_date_in_text(text)
 
-                        # Если все равно нет даты — пропускаем
-                        if not pub_date: 
-                            continue 
+                        # 4. FALLBACK: Если даты нет вообще нигде — берем ТЕКУЩУЮ.
+                        # Это нужно, чтобы новости не терялись.
+                        if not pub_date:
+                            pub_date = datetime.now()
 
                         news_id = item.get("id")
                         proj_id_from_api = item.get("projects", [project_id])[0]
@@ -188,22 +168,26 @@ class Scraper:
                             "published_at": pub_date,
                             "image_url": img
                         })
-                    logger.info(f"API {name}: OK")
+                    logger.info(f"API {name}: OK ({len(items)})")
             except Exception as e:
                 logger.error(f"API {name} Error: {e}")
         return results
 
     def scrape_direct(self, config: Dict) -> List[Dict]:
-        """Парсинг HTML для Akorda и PM"""
         results = []
         name = config["name"]
         try:
             resp = self.session.get(config["url"], timeout=20, verify=False)
-            if resp.status_code != 200: return []
+            if resp.status_code != 200: 
+                logger.warning(f"Direct {name}: Status {resp.status_code}")
+                return []
             
             soup = BeautifulSoup(resp.content, "html.parser")
             items = soup.select(config["article_selector"])[:3]
             
+            if not items:
+                logger.warning(f"Direct {name}: No items found by selector")
+
             for item in items:
                 link_el = item.select_one(config["link_selector"])
                 if not link_el: continue
@@ -212,35 +196,38 @@ class Scraper:
                 full_link = config["base_url"] + href if href.startswith("/") else href
                 title = link_el.get_text(strip=True)
 
-                # Загружаем полную страницу
+                # Заходим внутрь
                 full_text, image, pub_date = self.fetch_details(full_link)
                 
-                # Если fetch_details не нашел дату, пробуем найти снаружи (в списке новостей)
+                # Если fetch_details не нашел дату, пробуем найти снаружи
                 if not pub_date:
                     date_el = item.find(string=re.compile(r"\d{1,2}\s+[а-яА-Я]{3,}\s+\d{4}"))
-                    if date_el:
-                        pub_date = self.parse_date(date_el)
+                    if date_el: pub_date = self.parse_date(date_el)
                 
-                if pub_date:
-                    results.append({
-                        "title": title,
-                        "original_text": full_text or title,
-                        "source_name": name,
-                        "source_url": full_link,
-                        "published_at": pub_date,
-                        "image_url": image
-                    })
+                # FALLBACK: Если даты нет — берем ТЕКУЩУЮ
+                if not pub_date:
+                    pub_date = datetime.now()
+                
+                results.append({
+                    "title": title,
+                    "original_text": full_text or title,
+                    "source_name": name,
+                    "source_url": full_link,
+                    "published_at": pub_date,
+                    "image_url": image
+                })
             logger.info(f"Direct {name}: {len(results)} items")
         except Exception as e:
             logger.error(f"Direct {name} Error: {e}")
         return results
 
     def fetch_details(self, url: str):
-        """Загружает страницу новости и ищет детали."""
         try:
             resp = self.session.get(url, timeout=10, verify=False)
             soup = BeautifulSoup(resp.content, "html.parser")
-            text = "\n".join([p.get_text(strip=True) for p in soup.find_all("p")])
+            
+            # ВАЖНО: Читаем весь текст через get_text(), чтобы захватить DIV с датой
+            text = soup.get_text(separator="\n").strip()
             
             img = None
             meta_img = soup.find("meta", property="og:image")
@@ -254,15 +241,9 @@ class Scraper:
                     pub_date = self.parse_date(meta.get("content"))
                     if pub_date: break
             
-            # 2. ИЩЕМ В ТЕКСТЕ (твой запрос)
+            # 2. Ищем в тексте (теперь в полном тексте страницы)
             if not pub_date:
                 pub_date = self.find_date_in_text(text)
-                
-                # Доп. проверка: иногда дата в отдельном блоке div
-                if not pub_date:
-                    date_div = soup.find("div", class_=re.compile(r"date|time|info"))
-                    if date_div:
-                        pub_date = self.find_date_in_text(date_div.get_text())
 
             return text, img, pub_date
         except:
