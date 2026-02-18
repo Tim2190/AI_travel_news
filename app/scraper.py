@@ -456,53 +456,54 @@ class NewsScraper:
     # ========== ПАРСИНГ ДАТ ИЗ ТЕКСТА ==========
     def _extract_date_from_text(self, text: str) -> Optional[datetime]:
         """
-        Ищет дату в тексте через регулярные выражения.
-        Поддерживает форматы:
-        - "18 февраля 2025"
-        - "18.02.2025"
-        - "2025-02-18"
+        Улучшенный поиск даты. Ловит форматы:
+        - "16 февраля 2026 19:16"
+        - "16 февраля, 2026"
+        - "16.02.2026 / 19:16"
         """
+        if not text: return None
+        
+        # Ищем в первых 3500 символах (начало страницы)
+        search_area = text[:1000]
+
         months_ru = {
-            "января": 1, "февраля": 2, "марта": 3, "апреля": 4,
-            "мая": 5, "июня": 6, "июля": 7, "августа": 8,
-            "сентября": 9, "октября": 10, "ноября": 11, "декабря": 12
+            "января": 1, "февраля": 2, "марта": 3, "апреля": 4, "мая": 5, "июня": 6,
+            "июля": 7, "августа": 8, "сентября": 9, "октября": 10, "ноября": 11, "декабря": 12
         }
 
-        # 1. Формат "18 февраля 2025"
-        pattern1 = r"(\d{1,2})\s+(января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)\s+(\d{4})"
-        match = re.search(pattern1, text, re.IGNORECASE)
+        # 1. Текстовый формат: "16 февраля 2026"
+        # Добавил [,\s]+ чтобы ловить запятые и любые пробелы
+        # Добавил (?:г\.|года)? чтобы год с буквой "г" не ломал поиск
+        pattern1 = r"(\d{1,2})[,\s]+(января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)[,\s]+(\d{4})"
+        
+        match = re.search(pattern1, search_area, re.IGNORECASE)
         if match:
-            day = int(match.group(1))
-            month = months_ru[match.group(2).lower()]
-            year = int(match.group(3))
             try:
+                day = int(match.group(1))
+                month = months_ru[match.group(2).lower()]
+                year = int(match.group(3))
                 return datetime(year, month, day)
-            except ValueError:
-                pass
+            except Exception: pass
 
-        # 2. Формат "18.02.2025" или "18/02/2025"
-        pattern2 = r"(\d{1,2})[./](\d{1,2})[./](\d{4})"
-        match = re.search(pattern2, text)
+        # 2. Цифровой формат: "16.02.2026" или "16/02/2026" или "16-02-2026"
+        pattern2 = r"(\d{1,2})[\.\-\/](\d{1,2})[\.\-\/](\d{4})"
+        match = re.search(pattern2, search_area)
         if match:
-            day = int(match.group(1))
-            month = int(match.group(2))
-            year = int(match.group(3))
             try:
-                return datetime(year, month, day)
-            except ValueError:
-                pass
+                # Пробуем ДД.ММ.ГГГГ
+                d, m, y = int(match.group(1)), int(match.group(2)), int(match.group(3))
+                if d > 31: # Значит это формат ГГГГ.ММ.ДД
+                    return datetime(d, m, y)
+                return datetime(y, m, d)
+            except Exception: pass
 
-        # 3. Формат ISO "2025-02-18"
-        pattern3 = r"(\d{4})-(\d{1,2})-(\d{1,2})"
-        match = re.search(pattern3, text)
+        # 3. ISO формат: "2026-02-16"
+        pattern3 = r"(\d{4})-(\d{2})-(\d{2})"
+        match = re.search(pattern3, search_area)
         if match:
-            year = int(match.group(1))
-            month = int(match.group(2))
-            day = int(match.group(3))
             try:
-                return datetime(year, month, day)
-            except ValueError:
-                pass
+                return datetime(int(match.group(1)), int(match.group(2)), int(match.group(3)))
+            except Exception: pass
 
         return None
 
