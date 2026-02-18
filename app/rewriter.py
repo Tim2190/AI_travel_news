@@ -1,26 +1,27 @@
 import logging
 import re
 import asyncio
-from google import genai
-from google.genai import types
+import google.generativeai as genai
 from .config import settings
 
 logger = logging.getLogger(__name__)
 
 # --- НАСТРОЙКИ МОДЕЛЕЙ ---
-# Используем актуальные названия моделей в API Google
-# Для "2.5" используем 2.0 Flash (это текущий SOTA в классе Flash)
 MODEL_KZ = "gemini-2.0-flash"       
 MODEL_RU_JOURNALIST = "gemini-1.5-flash"
 MODEL_RU_EDITOR = "gemini-2.0-flash"
 
 class GeminiRewriter:
     def __init__(self):
-        # Инициализация единого клиента
-        self.client = genai.Client(api_key=settings.GEMINI_API_KEY)
+        # Инициализация стандартной библиотеки
+        if settings.GEMINI_API_KEY:
+            genai.configure(api_key=settings.GEMINI_API_KEY)
+        else:
+            logger.error("CRITICAL: GEMINI_API_KEY is missing in settings!")
 
     def _is_kazakh(self, text: str) -> bool:
         """Определяет, является ли текст казахским по специфическим буквам."""
+        # Ищем уникальные казахские буквы
         kz_chars = r'[әіңғүұқөһӘІҢҒҮҰҚӨҺ]'
         return bool(re.search(kz_chars, text, re.IGNORECASE))
 
@@ -56,19 +57,22 @@ class GeminiRewriter:
         )
 
         try:
+            # Инициализируем модель под конкретную задачу
+            model = genai.GenerativeModel(
+                model_name=MODEL_KZ,
+                system_instruction=system_prompt
+            )
+            
+            # Запускаем в отдельном потоке, чтобы не блокировать бота
             response = await asyncio.to_thread(
-                self.client.models.generate_content,
-                model=MODEL_KZ,
-                config=types.GenerateContentConfig(
-                    system_instruction=system_prompt,
-                    temperature=0.3, # Понижаем температуру для строгости
-                ),
-                contents=[text]
+                model.generate_content,
+                text,
+                generation_config=genai.GenerationConfig(temperature=0.3)
             )
             return self._clean_output(response.text)
         except Exception as e:
             logger.error(f"KZ Pipeline Error: {e}")
-            return text # Возвращаем оригинал в случае ошибки
+            return text # Возвращаем оригинал, если модель упала
 
     # =================================================================
     # ВЕТКА 2: РУССКИЙ ЯЗЫК (1.5 Flash -> 2.0 Flash)
@@ -97,14 +101,14 @@ class GeminiRewriter:
             "4. Напиши черновик простым языком."
         )
         try:
+            model = genai.GenerativeModel(
+                model_name=MODEL_RU_JOURNALIST,
+                system_instruction=prompt
+            )
             response = await asyncio.to_thread(
-                self.client.models.generate_content,
-                model=MODEL_RU_JOURNALIST,
-                config=types.GenerateContentConfig(
-                    system_instruction=prompt,
-                    temperature=0.4,
-                ),
-                contents=[text]
+                model.generate_content,
+                text,
+                generation_config=genai.GenerationConfig(temperature=0.4)
             )
             return response.text
         except Exception as e:
@@ -124,19 +128,19 @@ class GeminiRewriter:
             "7. НЕ используй Markdown (**bold**), только HTML (<b>bold</b>)."
         )
         try:
+            model = genai.GenerativeModel(
+                model_name=MODEL_RU_EDITOR,
+                system_instruction=prompt
+            )
             response = await asyncio.to_thread(
-                self.client.models.generate_content,
-                model=MODEL_RU_EDITOR,
-                config=types.GenerateContentConfig(
-                    system_instruction=prompt,
-                    temperature=0.2, # Минимум творчества, максимум дисциплины
-                ),
-                contents=[draft]
+                model.generate_content,
+                draft,
+                generation_config=genai.GenerationConfig(temperature=0.2)
             )
             return response.text
         except Exception as e:
             logger.error(f"Editor Error: {e}")
-            return draft # Если редактор упал, возвращаем черновик журналиста
+            return draft 
 
     def _clean_output(self, text: str) -> str:
         """Финальная чистка от мусора, если модель все-таки его выдала."""
