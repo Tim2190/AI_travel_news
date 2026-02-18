@@ -3,22 +3,29 @@ import re
 import asyncio
 from google import genai
 from google.genai import types
+from groq import AsyncGroq # Не забудь добавить groq в requirements.txt
 from .config import settings
 
 logger = logging.getLogger(__name__)
 
-# --- НАСТРОЙКИ (Переходим на 2.5-flash) ---
-MODEL_KZ = "gemini-2.5-flash"        
-MODEL_RU_JOURNALIST = "gemini-2.5-flash" 
-MODEL_RU_EDITOR = "gemini-2.5-flash"
-MAX_TG_CAPTION_LEN = 800  
+# --- НАСТРОЙКИ МОДЕЛЕЙ ---
+MODEL_KZ = "gemini-2.5-flash"
+MODEL_RU_GROQ = "meta-llama/llama-4-scout-17b-16e-instruct" # Топовая и быстрая модель на Groq
+MAX_TG_CAPTION_LEN = 800
 
 class GeminiRewriter:
     def __init__(self):
+        # Инициализация Gemini
         if settings.GEMINI_API_KEY:
-            self.client = genai.Client(api_key=settings.GEMINI_API_KEY)
+            self.gemini_client = genai.Client(api_key=settings.GEMINI_API_KEY)
         else:
             logger.error("CRITICAL: GEMINI_API_KEY is missing!")
+
+        # Инициализация Groq
+        if settings.GROQ_API_KEY:
+            self.groq_client = AsyncGroq(api_key=settings.GROQ_API_KEY)
+        else:
+            logger.error("CRITICAL: GROQ_API_KEY is missing!")
 
     def _is_kazakh(self, text: str) -> bool:
         kz_chars = r'[әіңғүұқөһӘІҢҒҮҰҚӨҺ]'
@@ -27,35 +34,24 @@ class GeminiRewriter:
     async def rewrite(self, text: str) -> str:
         if not text: return ""
         
-        # Даем API "продышаться" перед новым циклом
-        await asyncio.sleep(2) 
-
         if self._is_kazakh(text):
             return await self._process_kz(text)
         else:
             return await self._process_ru_pipeline(text)
 
-    # --- КАЗАХСКИЙ ---
+    # --- КАЗАХСКИЙ (GEMINI 2.5 FLASH) ---
     async def _process_kz(self, text: str) -> str:
         logger.info(f"🇰🇿 KZ Pipeline: {MODEL_KZ}")
-        
         system_prompt = (
             "Сен — кәсіби редакторсың. Мәтінді қазақ тілінде өңде.\n"
             f"ШЕКТЕУ: Мәтін {MAX_TG_CAPTION_LEN} символдан аспауы керек.\n"
             "ЕРЕЖЕЛЕР:\n"
-            "1. Ешқандай кіріспе сөз жазба.\n"
-            "2. Орысша сөздерді қолданба.\n"
-            "3. Ресми, бірақ қысқа әрі түсінікті жаз.\n"
-            "4. ТЕК ҚАНА МӘТІНДІ ҚАЙТАР.\n\n"
-            "ҚҰРЫЛЫМ:\n"
-            "<b>Тақырып</b>\n\n"
-            "Негізгі мәтін (қысқаша).\n"
-            "#хэштегтер"
+            "1. Ешқандай кіріспе сөз жазба. ТЕК ҚАНА МӘТІНДІ ҚАЙТАР.\n"
+            "ҚҰРЫЛЫМ: <b>Тақырып</b>, бос жол, Негізгі мәтін, #хэштегтер"
         )
-
         try:
             response = await asyncio.to_thread(
-                self.client.models.generate_content,
+                self.gemini_client.models.generate_content,
                 model=MODEL_KZ,
                 contents=text,
                 config=types.GenerateContentConfig(
@@ -65,65 +61,56 @@ class GeminiRewriter:
             )
             return self._clean_output(response.text)
         except Exception as e:
-            logger.error(f"KZ Error: {e}")
+            logger.error(f"Gemini KZ Error: {e}")
             return text[:MAX_TG_CAPTION_LEN]
 
-    # --- РУССКИЙ (Двухэтапный на 2.5 Flash) ---
+    # --- РУССКИЙ (GROQ / LLAMA 3.3) ---
     async def _process_ru_pipeline(self, text: str) -> str:
-        logger.info(f"🇷🇺 RU Pipeline Started on {MODEL_RU_JOURNALIST}...")
+        logger.info(f"🇷🇺 RU Pipeline (GROQ): {MODEL_GROQ}")
 
-        # Шаг 1: Журналист
-        draft = await self._run_agent(
-            text, 
-            role="Журналист",
-            model=MODEL_RU_JOURNALIST,
-            prompt="Выдели суть. Убери воду. Оставь только факты и цифры. Будь краток. Пиши понятно для всех людей",
-            temp=0.4
+        # Шаг 1: Журналист (Groq)
+        draft = await self._run_groq_agent(
+            text,
+            prompt="Ты журналист. Сделай краткое изложение новости, убери воду и канцеляризмы. Оставь только факты. Будь краток."
         )
         if not draft: return text[:MAX_TG_CAPTION_LEN]
 
-        # --- ЗАЩИТА: Ждем 10 секунд, чтобы обнулить минутную квоту ---
-        logger.info("⏳ Охлаждение API (10 сек) перед вторым этапом...")
-        await asyncio.sleep(10)
+        # На Groq лимиты мягче, 2-3 секунды хватит за глаза
+        await asyncio.sleep(2)
 
-        # Шаг 2: Редактор
-        final_text = await self._run_agent(
+        # Шаг 2: Редактор (Groq)
+        final_text = await self._run_groq_agent(
             draft,
-            role="Редактор",
-            model=MODEL_RU_EDITOR,
             prompt=(
-                "Ты — Выпускающий Редактор. Формат для Telegram.\n"
-                f"СТРОГОЕ ОГРАНИЧЕНИЕ: Весь текст до {MAX_TG_CAPTION_LEN} символов.\n"
+                "Ты — Выпускающий Редактор Telegram-канала.\n"
+                f"ОГРАНИЧЕНИЕ: Весь текст до {MAX_TG_CAPTION_LEN} символов.\n"
                 "1. Начинай сразу с заголовка <b>...</b>.\n"
-                "2. Текст должен быть плотным, без воды.\n"
-                "3. Только HTML (<b>, <i>).\n"
-                "4. В конце 2-3 хэштега."
-            ),
-            temp=0.2
+                "2. Текст разбей на 2 абзаца. Используй только HTML (<b>, <i>).\n"
+                "3. В конце 2-3 хэштега."
+            )
         )
         return self._clean_output(final_text)
 
-    async def _run_agent(self, content: str, role: str, model: str, prompt: str, temp: float) -> str:
+    async def _run_groq_agent(self, content: str, prompt: str) -> str:
+        """Метод для работы с Groq API"""
         try:
-            response = await asyncio.to_thread(
-                self.client.models.generate_content,
-                model=model,
-                contents=content,
-                config=types.GenerateContentConfig(
-                    system_instruction=prompt,
-                    temperature=temp
-                )
+            completion = await self.groq_client.chat.completions.create(
+                model=MODEL_RU_GROQ,
+                messages=[
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": content}
+                ],
+                temperature=0.3,
+                max_tokens=1000
             )
-            return response.text
+            return completion.choices[0].message.content
         except Exception as e:
-            if "429" in str(e):
-                logger.warning(f"⚠️ {role} ({model}) - лимит 429. Нужно увеличить паузу.")
-            else:
-                logger.error(f"{role} Error: {e}")
-            return content if role == "Редактор" else None
+            logger.error(f"Groq Agent Error: {e}")
+            return None
 
     def _clean_output(self, text: str) -> str:
         if not text: return ""
+        # Исправляем Markdown жирный на HTML если модель ошиблась
         text = re.sub(r"\*\*(.*?)\*\*", r"<b>\1</b>", text)
         if "<b>" in text:
             text = text[text.find("<b>"):]
