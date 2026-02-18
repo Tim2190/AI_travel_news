@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 import logging
 import urllib3
 import re
+import time
 from typing import List, Dict, Optional, Tuple
 
 # Playwright — только для gov.kz (получение токенов)
@@ -228,6 +229,10 @@ async def _fetch_gov_kz_tokens() -> Optional[Dict]:
                         tokens["token"] = h["token"]
                         tokens["referer"] = h.get("referer", "https://www.gov.kz/")
                         tokens["user-agent"] = h.get("user-agent", "")
+                        # Добавляем дополнительные заголовки браузера
+                        tokens["sec-fetch-dest"] = h.get("sec-fetch-dest", "empty")
+                        tokens["sec-fetch-mode"] = h.get("sec-fetch-mode", "cors")
+                        tokens["sec-fetch-site"] = h.get("sec-fetch-site", "same-origin")
                         logger.info("✅ gov.kz токены получены через Playwright")
 
             page.on("request", handle_request)
@@ -255,7 +260,7 @@ class NewsScraper:
     def __init__(self, direct_sources: List[Dict] = None):
         self.direct_sources = direct_sources or DIRECT_SCRAPE_SOURCES
 
-    # ========== ИСПРАВЛЕНИЕ ПРОБЛЕМЫ 1: async/await вместо loop.run_until_complete ==========
+    # ========== ASYNC МЕТОД ДЛЯ ИНТЕГРАЦИИ С FASTAPI ==========
     async def scrape_async(self) -> List[Dict]:
         """
         Async-версия scrape() для интеграции с FastAPI.
@@ -309,7 +314,10 @@ class NewsScraper:
 
         all_news = []
         for source in sources:
-            all_news.extend(self._scrape_gov_kz_source(source, _gov_kz_tokens))
+            news = self._scrape_gov_kz_source(source, _gov_kz_tokens)
+            all_news.extend(news)
+            # ЗАДЕРЖКА между источниками чтобы не словить rate limit
+            time.sleep(0.7)
 
         return all_news
 
@@ -331,36 +339,79 @@ class NewsScraper:
             f"?sort-by=created_date:DESC&projects=eq:{project}&page=1&size=20"
         )
 
+        # Полный набор браузерных заголовков
         headers = {
             "accept": "application/json",
             "accept-language": "ru",
-            "user-agent": tokens.get("user-agent", "Mozilla/5.0"),
+            "user-agent": tokens.get("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"),
             "referer": f"{base_url}/memleket/entities/{project}/press/news?lang=ru",
             "hash": tokens["hash"],
             "token": tokens["token"],
+            "sec-fetch-dest": tokens.get("sec-fetch-dest", "empty"),
+            "sec-fetch-mode": tokens.get("sec-fetch-mode", "cors"),
+            "sec-fetch-site": tokens.get("sec-fetch-site", "same-origin"),
+            "origin": base_url,
         }
 
         news = []
         try:
             logger.info(f"API запрос: {name}...")
             resp = requests.get(api_url, headers=headers, timeout=15, verify=False)
-            resp.raise_for_status()
+            
+            # ДИАГНОСТИКА: проверяем статус
+            if resp.status_code != 200:
+                logger.error(f"API {name} вернул код {resp.status_code}")
+                logger.error(f"Ответ сервера: {resp.text[:500]}")
+                return []
+            
             data = resp.json()
 
-            # API возвращает {"content": [...], "totalElements": N, ...}
-            items = data.get("content", [])
+            # ДИАГНОСТИКА: смотрим структуру ответа
+            logger.info(f"API response type for {name}: {type(data)}")
+            if isinstance(data, dict):
+                logger.info(f"API response keys: {list(data.keys())}")
+            
+            # Обработка разных форматов ответа
+            items = []
+            if isinstance(data, list):
+                # API вернул массив напрямую
+                items = data
+                logger.info(f"{name}: API вернул список из {len(items)} элементов")
+            elif isinstance(data, dict):
+                # API вернул {"content": [...], ...}
+                items = data.get("content", [])
+                if not items:
+                    # Возможно другая структура
+                    logger.warning(f"{name}: 'content' не найден. Доступные ключи: {list(data.keys())}")
+                    # Пробуем другие варианты
+                    items = data.get("data", []) or data.get("items", []) or data.get("news", [])
+            else:
+                logger.error(f"{name}: Unexpected API response type: {type(data)}")
+                return []
+
+            if not items:
+                logger.warning(f"{name}: API вернул пустой список новостей")
+                return []
+
+            logger.info(f"{name}: Обрабатываем {len(items)} новостей")
 
             for item in items:
-                title = item.get("name", "").strip()
+                # Защита от неправильного формата элемента
+                if not isinstance(item, dict):
+                    logger.warning(f"{name}: элемент не dict, а {type(item)}")
+                    continue
+
+                title = item.get("name", "").strip() or item.get("title", "").strip()
                 slug = item.get("id") or item.get("slug", "")
+                
                 if not title or not slug:
                     continue
 
                 link = f"{base_url}/memleket/entities/{project}/press/news/details/{slug}?lang=ru"
 
-                # Дата из API — уже есть, не нужно парсить HTML
+                # Дата из API
                 published_at = None
-                raw_date = item.get("createdDate") or item.get("created_date") or item.get("publishedDate")
+                raw_date = item.get("createdDate") or item.get("created_date") or item.get("publishedDate") or item.get("date")
                 if raw_date:
                     published_at = self._parse_date(str(raw_date))
 
@@ -379,8 +430,12 @@ class NewsScraper:
                     "published_at": final_date,
                 })
 
+            logger.info(f"✅ {name}: собрано {len(news)} новостей")
+
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Ошибка сети API {name}: {e}")
         except Exception as e:
-            logger.error(f"Ошибка API {name}: {e}")
+            logger.error(f"Ошибка API {name}: {e}", exc_info=True)
 
         return news
 
@@ -438,7 +493,7 @@ class NewsScraper:
             logger.error(f"Error scraping {name}: {e}")
         return news
 
-    # ========== ИСПРАВЛЕНИЕ ПРОБЛЕМЫ 2: Улучшенный парсинг дат ==========
+    # ========== УЛУЧШЕННЫЙ ПАРСИНГ ДАТ ==========
     def _extract_publish_date(self, soup: BeautifulSoup) -> Optional[datetime]:
         """
         Извлекает дату публикации из:
@@ -462,7 +517,6 @@ class NewsScraper:
                 return parsed
 
         # 3. Ищем дату в видимом тексте страницы через regex
-        # Паттерны: "18 февраля 2025", "18.02.2025", "2025-02-18"
         text = soup.get_text()
         date_from_text = self._extract_date_from_text(text)
         if date_from_text:
