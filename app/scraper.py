@@ -464,7 +464,7 @@ class NewsScraper:
         if not text: return None
         
         # Ищем в первых 3500 символах (начало страницы)
-        search_area = text[:1000]
+        search_area = text[:5000]
 
         months_ru = {
             "января": 1, "февраля": 2, "марта": 3, "апреля": 4, "мая": 5, "июня": 6,
