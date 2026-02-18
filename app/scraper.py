@@ -27,33 +27,27 @@ MONTHS_KZ = {
     "шіл": 7, "там": 8, "қыр": 9, "қаз": 10, "қар": 11, "жел": 12
 }
 
-# Обновленные селекторы и User-Agent
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-    "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7"
-}
-
+# 1. Прямые источники (Akorda, PrimeMinister)
 DIRECT_SOURCES = [
     {
         "name": "Akorda (Президент)",
         "url": "https://www.akorda.kz/ru/events",
-        # Ищем любой блок, похожий на новость
-        "article_selector": ".event-item, .news-list__item, div.item, .news-item", 
-        "title_selector": "h3, h4, .title",
-        "link_selector": "a", # Любая ссылка внутри блока
-        "base_url": "https://www.akorda.kz"
+        "base_url": "https://www.akorda.kz",
+        # Ищем ЛЮБЫЕ ссылки, содержащие /events/ в адресе (это надежнее классов)
+        "link_pattern": re.compile(r"/ru/events/[\w-]+"), 
+        "container_tag": "div" # Ограничитель поиска (ищем внутри div)
     },
     {
         "name": "PrimeMinister (Правительство)",
         "url": "https://primeminister.kz/ru/news",
-        "article_selector": ".news_item, .card, .post-item, .news-list-item",
-        "title_selector": ".news_title, .card-title, h3",
-        "link_selector": "a",
-        "base_url": "https://primeminister.kz"
+        "base_url": "https://primeminister.kz",
+        # Ищем ЛЮБЫЕ ссылки на новости
+        "link_pattern": re.compile(r"/ru/news/[\w-]+"),
+        "container_tag": "div"
     }
 ]
 
+# 2. GOV.KZ (API ID)
 GOV_KZ_PROJECTS = {
     "МинНацЭкономики": 4, "МинФин": 2, "МИД РК": 6, "МВД РК": 11,
     "МинТруда": 21, "МинЗдрав": 17, "МинПросвещения": 14, "МинНауки": 15,
@@ -65,20 +59,22 @@ GOV_KZ_PROJECTS = {
 class Scraper:
     def __init__(self):
         self.session = requests.Session()
-        self.session.headers.update(HEADERS)
+        # УПРОЩЕННЫЕ ЗАГОЛОВКИ (чтобы не пугать сервер 500-й ошибкой)
+        self.session.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        })
 
     def parse_date(self, date_str: str) -> Optional[datetime]:
+        """Парсер даты."""
         if not date_str: return None
         date_str = str(date_str).strip().lower()
 
-        # ISO
         try:
             iso_clean = date_str.split("+")[0].split(".")[0].replace("z", "")
             if "t" in iso_clean: return datetime.fromisoformat(iso_clean)
             if len(iso_clean) == 10 and "-" in iso_clean: return datetime.strptime(iso_clean, "%Y-%m-%d")
         except: pass
 
-        # Text
         clean_text = re.sub(r"\s+\d{1,2}:\d{2}.*", "", date_str) 
         clean_text = re.sub(r"[^\w\s\.]", "", clean_text)
         
@@ -101,8 +97,9 @@ class Scraper:
         return None
 
     def find_date_in_text(self, text: str) -> Optional[datetime]:
+        """Ищет дату в начале текста."""
         if not text: return None
-        head = text[:500]
+        head = text[:600]
         
         match_dots = re.search(r"\d{2}\.\d{2}\.\d{4}", head)
         if match_dots: return self.parse_date(match_dots.group(0))
@@ -112,13 +109,13 @@ class Scraper:
         return None
 
     def scrape(self) -> List[Dict]:
-        logger.info("🔍 START SCRAPING...")
+        """Главный метод запуска."""
+        logger.warning("🏁 STARTING SCRAPE CYCLE (SIMPLE MODE)...")
         all_news = []
         all_news.extend(self.scrape_gov_kz_api())
         for source in DIRECT_SOURCES:
             all_news.extend(self.scrape_direct(source))
-        
-        logger.info(f"✅ SCRAPE FINISHED. Found: {len(all_news)}")
+        logger.warning(f"✅ CYCLE FINISHED. Total items found: {len(all_news)}")
         return all_news
 
     def scrape_gov_kz_api(self) -> List[Dict]:
@@ -128,8 +125,8 @@ class Scraper:
         for name, project_id in GOV_KZ_PROJECTS.items():
             try:
                 params = {"projects": project_id, "lang": "ru", "limit": 3}
-                # Добавил таймаут побольше
-                resp = self.session.get(base_api, params=params, timeout=15, verify=False)
+                # Таймаут 10 сек, простые заголовки
+                resp = self.session.get(base_api, params=params, timeout=10, verify=False)
                 
                 if resp.status_code == 200:
                     data = resp.json()
@@ -145,6 +142,7 @@ class Scraper:
                         text = soup.get_text(separator="\n").strip()
 
                         if not pub_date: pub_date = self.find_date_in_text(text)
+                        # FALLBACK: Если даты нет — ставим СЕЙЧАС
                         if not pub_date: pub_date = datetime.now()
 
                         news_id = item.get("id")
@@ -160,13 +158,11 @@ class Scraper:
                             "source_name": name, "source_url": link,
                             "published_at": pub_date, "image_url": img
                         })
-                    # Убрал спам "API OK", теперь только если реально нашли
                     if items: logger.info(f"API {name}: found {len(items)}")
                 else:
-                    # ВАЖНО: Логируем код ошибки
-                    logger.warning(f"API {name} Failed: Status {resp.status_code}")
+                    logger.warning(f"API {name} Error: Status {resp.status_code}")
             except Exception as e:
-                logger.error(f"API {name} Error: {e}")
+                logger.error(f"API {name} Exception: {e}")
         return results
 
     def scrape_direct(self, config: Dict) -> List[Dict]:
@@ -179,29 +175,30 @@ class Scraper:
                 return []
             
             soup = BeautifulSoup(resp.content, "html.parser")
-            items = soup.select(config["article_selector"])[:3]
             
-            if not items:
-                logger.warning(f"Direct {name}: No items found (check selectors)")
+            # НОВАЯ ЛОГИКА: Ищем все ссылки <a>, которые подходят под паттерн
+            # Это игнорирует классы и ищет просто по структуре URL
+            seen_links = set()
+            found_links = []
+            
+            for a in soup.find_all("a", href=True):
+                href = a["href"]
+                # Если ссылка подходит под паттерн (например /ru/events/...)
+                if config["link_pattern"].search(href):
+                    full_link = config["base_url"] + href if href.startswith("/") else href
+                    if full_link not in seen_links:
+                        seen_links.add(full_link)
+                        found_links.append((a, full_link))
+                        if len(found_links) >= 3: break # Берем только 3 свежих
 
-            for item in items:
-                # Ищем любую ссылку в блоке
-                link_el = item.select_one(config["link_selector"])
-                if not link_el: continue
-                
-                href = link_el.get("href")
-                if not href: continue
-                full_link = config["base_url"] + href if href.startswith("/") else href
-                
-                # Заголовок - либо из тега заголовка, либо текст ссылки
-                title_el = item.select_one(config["title_selector"])
-                title = title_el.get_text(strip=True) if title_el else link_el.get_text(strip=True)
+            if not found_links:
+                logger.warning(f"Direct {name}: No matching links found")
+
+            for link_el, full_link in found_links:
+                title = link_el.get_text(strip=True)
+                if len(title) < 5: continue # Пропускаем мусор
 
                 full_text, image, pub_date = self.fetch_details(full_link)
-                
-                if not pub_date:
-                    date_el = item.find(string=re.compile(r"\d{1,2}\s+[а-яА-Я]{3,}\s+\d{4}"))
-                    if date_el: pub_date = self.parse_date(date_el)
                 
                 if not pub_date: pub_date = datetime.now()
                 
