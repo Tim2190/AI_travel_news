@@ -7,11 +7,11 @@ from .config import settings
 
 logger = logging.getLogger(__name__)
 
-# --- НАСТРОЙКИ ---
+# --- НАСТРОЙКИ (БЕЗ ИЗМЕНЕНИЙ) ---
 MODEL_KZ = "gemini-2.5-flash"        
 MODEL_RU_JOURNALIST = "gemini-2.0-flash" 
 MODEL_RU_EDITOR = "gemini-2.0-flash"
-MAX_TG_CAPTION_LEN = 800  # Твой лимит
+MAX_TG_CAPTION_LEN = 800  
 
 class GeminiRewriter:
     def __init__(self):
@@ -26,6 +26,10 @@ class GeminiRewriter:
 
     async def rewrite(self, text: str) -> str:
         if not text: return ""
+        
+        # Даем API "продышаться" перед новым запросом
+        await asyncio.sleep(2) 
+
         if self._is_kazakh(text):
             return await self._process_kz(text)
         else:
@@ -64,7 +68,7 @@ class GeminiRewriter:
             logger.error(f"KZ Error: {e}")
             return text[:MAX_TG_CAPTION_LEN]
 
-    # --- РУССКИЙ ---
+    # --- РУССКИЙ (С ЗАЩИТОЙ ОТ ПЕРЕГРУЗКИ) ---
     async def _process_ru_pipeline(self, text: str) -> str:
         logger.info("🇷🇺 RU Pipeline Started...")
 
@@ -77,6 +81,11 @@ class GeminiRewriter:
             temp=0.4
         )
         if not draft: return text[:MAX_TG_CAPTION_LEN]
+
+        # --- КРИТИЧЕСКАЯ ПРАВКА: Ждем 10 секунд перед следующим запросом ---
+        # Это предотвращает 429 ошибку между шагами Journalist и Editor
+        logger.info("⏳ Охлаждение API (10 сек)...")
+        await asyncio.sleep(10)
 
         # Шаг 2: Редактор
         final_text = await self._run_agent(
@@ -108,24 +117,20 @@ class GeminiRewriter:
             )
             return response.text
         except Exception as e:
-            logger.error(f"{role} Error: {e}")
+            # Если словили 429, логируем это четко
+            if "429" in str(e):
+                logger.warning(f"⚠️ {role} попал под лимит 429. Нужно больше времени на отдых.")
+            else:
+                logger.error(f"{role} Error: {e}")
             return content if role == "Редактор" else None
 
     def _clean_output(self, text: str) -> str:
         if not text: return ""
-        
-        # 1. Конвертация Markdown в HTML
         text = re.sub(r"\*\*(.*?)\*\*", r"<b>\1</b>", text)
-        
-        # 2. Отрезаем "вступления" если они есть
         if "<b>" in text:
             text = text[text.find("<b>"):]
-        
-        # 3. ЖЕСТКИЙ ЛИМИТ (Если нейронка не послушалась)
         if len(text) > MAX_TG_CAPTION_LEN:
-            logger.warning(f"Output too long ({len(text)}). Truncating to {MAX_TG_CAPTION_LEN}")
             text = text[:MAX_TG_CAPTION_LEN-3] + "..."
-            
         return text.strip()
 
 rewriter = GeminiRewriter()
