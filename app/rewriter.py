@@ -66,7 +66,7 @@ class GeminiRewriter:
 
     # --- РУССКИЙ (GROQ / LLAMA 3.3) ---
     async def _process_ru_pipeline(self, text: str) -> str:
-        logger.info(f"🇷🇺 RU Pipeline (GROQ): {MODEL_GROQ}")
+        logger.info(f"🇷🇺 RU Pipeline (GROQ): {MODEL_RU_GROQ}")
 
         # Шаг 1: Журналист (Groq)
         draft = await self._run_groq_agent(
