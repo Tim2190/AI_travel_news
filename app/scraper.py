@@ -173,9 +173,6 @@ DIRECT_SCRAPE_SOURCES: List[Dict] = [
     },
 ]
 
-# Кэш токенов — получаем один раз через Playwright, используем для всех gov.kz запросов
-_gov_kz_tokens: Optional[Dict] = None
-
 
 async def _fetch_gov_kz_tokens() -> Optional[Dict]:
     """
@@ -209,25 +206,23 @@ async def _fetch_gov_kz_tokens() -> Optional[Dict]:
                         tokens["token"] = h["token"]
                         tokens["referer"] = h.get("referer", "https://www.gov.kz/")
                         tokens["user-agent"] = h.get("user-agent", "")
-                        # Добавляем дополнительные заголовки браузера
                         tokens["sec-fetch-dest"] = h.get("sec-fetch-dest", "empty")
                         tokens["sec-fetch-mode"] = h.get("sec-fetch-mode", "cors")
                         tokens["sec-fetch-site"] = h.get("sec-fetch-site", "same-origin")
+                        tokens["obtained_at"] = time.time()  # запоминаем время получения
                         logger.info("✅ gov.kz токены получены через Playwright")
 
             page.on("request", handle_request)
 
-            # Используем economy как «донора» токенов — они работают для всех проектов
             await page.goto(
                 "https://www.gov.kz/memleket/entities/economy/press/news?lang=ru",
                 wait_until="domcontentloaded",
                 timeout=60000,
             )
             
-            # Увеличенный timeout — иногда gov.kz тормозит
             await page.wait_for_selector(
                 "a[href*='/press/news/details/']",
-                timeout=45000,  # было 30000
+                timeout=45000,
             )
             await browser.close()
 
@@ -250,68 +245,71 @@ class NewsScraper:
         """
         all_news = []
 
-        # Разделяем источники на gov.kz и обычные
+        # Только gov.kz источники (Akorda и PrimeMinister убрали)
         gov_sources = [s for s in self.direct_sources if s.get("gov_kz")]
-        regular_sources = [s for s in self.direct_sources if not s.get("gov_kz")]
 
-        # Обычные источники — синхронный BS4 (в отдельном потоке чтобы не блокировать)
-        import asyncio
-        loop = asyncio.get_event_loop()
-        regular_news = await loop.run_in_executor(
-            None,
-            self._scrape_all_regular_sources,
-            regular_sources
-        )
-        all_news.extend(regular_news)
-
-        # gov.kz источники — async гибридный метод
+        # gov.kz источники — async гибридный метод с батчами
         if gov_sources:
-            gov_news = await self._scrape_all_gov_kz(gov_sources)
+            gov_news = await self._scrape_all_gov_kz_batched(gov_sources)
             all_news.extend(gov_news)
 
         logger.info(f"Total news gathered: {len(all_news)}")
         return all_news
 
-    def _scrape_all_regular_sources(self, sources: List[Dict]) -> List[Dict]:
-        """Синхронная обработка обычных источников (не gov.kz)"""
+    async def _scrape_all_gov_kz_batched(self, sources: List[Dict]) -> List[Dict]:
+        """
+        Обрабатывает gov.kz источники батчами по 5 штук.
+        Для каждого батча получаются СВЕЖИЕ токены через Playwright.
+        Это защита от протухания токенов и rate limiting.
+        """
         all_news = []
-        for source in sources:
-            all_news.extend(self._scrape_direct_source(source))
-        return all_news
+        batch_size = 5
+        
+        total_batches = (len(sources) + batch_size - 1) // batch_size
+        logger.info(f"📦 Всего источников: {len(sources)}, разбиваем на {total_batches} батчей по {batch_size}")
 
-    async def _scrape_all_gov_kz(self, sources: List[Dict]) -> List[Dict]:
-        """
-        Получает токены ОДИН РАЗ через Playwright,
-        затем обходит все gov.kz источники через лёгкий requests.
-        """
-        global _gov_kz_tokens
-
-        if _gov_kz_tokens is None:
-            logger.info("🔑 Получаем токены gov.kz через Playwright...")
+        for batch_idx in range(0, len(sources), batch_size):
+            batch = sources[batch_idx:batch_idx + batch_size]
+            batch_num = batch_idx // batch_size + 1
+            
+            logger.info(f"🔄 Батч {batch_num}/{total_batches}: {[s['name'] for s in batch]}")
+            
+            # Получаем свежие токены для каждого батча
             try:
-                _gov_kz_tokens = await _fetch_gov_kz_tokens()
+                tokens = await _fetch_gov_kz_tokens()
+                if not tokens:
+                    logger.error(f"❌ Батч {batch_num}: не удалось получить токены, пропускаем")
+                    continue
+                
+                age = time.time() - tokens.get('obtained_at', 0)
+                logger.info(f"🔑 Батч {batch_num}: токены свежие ({age:.1f} сек)")
+                
             except Exception as e:
-                logger.error(f"Критическая ошибка получения токенов: {e}", exc_info=True)
-                _gov_kz_tokens = None
+                logger.error(f"❌ Батч {batch_num}: ошибка получения токенов: {e}")
+                continue
 
-        if not _gov_kz_tokens:
-            logger.error("Не удалось получить токены gov.kz — пропускаем все gov.kz источники")
-            return []
+            # Обрабатываем источники в батче
+            for source in batch:
+                try:
+                    news = self._scrape_gov_kz_source(source, tokens)
+                    all_news.extend(news)
+                    # Задержка между источниками
+                    time.sleep(0.7)
+                except Exception as e:
+                    logger.error(f"❌ Ошибка обработки {source['name']}: {e}")
+                    continue
 
-        logger.info("✅ Токены готовы, начинаем сбор новостей с gov.kz источников")
-        all_news = []
-        for source in sources:
-            news = self._scrape_gov_kz_source(source, _gov_kz_tokens)
-            all_news.extend(news)
-            # ЗАДЕРЖКА между источниками чтобы не словить rate limit
-            time.sleep(0.7)
+            # Пауза между батчами (чтобы не палиться перед сервером)
+            if batch_num < total_batches:
+                logger.info(f"⏸️  Пауза 3 сек перед следующим батчем...")
+                time.sleep(3)
 
+        logger.info(f"✅ Все батчи обработаны. Собрано новостей: {len(all_news)}")
         return all_news
 
     def _scrape_gov_kz_source(self, config: Dict, tokens: Dict) -> List[Dict]:
         """
         Парсит один gov.kz источник через прямой API запрос с токенами.
-        Браузер здесь не нужен — только лёгкий requests.
         """
         name = config.get("name", "Unknown")
         project = config.get("project")
@@ -326,7 +324,6 @@ class NewsScraper:
             f"?sort-by=created_date:DESC&projects=eq:{project}&page=1&size=20"
         )
 
-        # Полный набор браузерных заголовков
         headers = {
             "accept": "application/json",
             "accept-language": "ru",
@@ -345,7 +342,6 @@ class NewsScraper:
             logger.info(f"API запрос: {name}...")
             resp = requests.get(api_url, headers=headers, timeout=15, verify=False)
             
-            # ДИАГНОСТИКА: проверяем статус
             if resp.status_code != 200:
                 logger.error(f"API {name} вернул код {resp.status_code}")
                 logger.error(f"Ответ сервера: {resp.text[:500]}")
@@ -353,24 +349,14 @@ class NewsScraper:
             
             data = resp.json()
 
-            # ДИАГНОСТИКА: смотрим структуру ответа
-            logger.info(f"API response type for {name}: {type(data)}")
-            if isinstance(data, dict):
-                logger.info(f"API response keys: {list(data.keys())}")
-            
             # Обработка разных форматов ответа
             items = []
             if isinstance(data, list):
-                # API вернул массив напрямую
                 items = data
                 logger.info(f"{name}: API вернул список из {len(items)} элементов")
             elif isinstance(data, dict):
-                # API вернул {"content": [...], ...}
                 items = data.get("content", [])
                 if not items:
-                    # Возможно другая структура
-                    logger.warning(f"{name}: 'content' не найден. Доступные ключи: {list(data.keys())}")
-                    # Пробуем другие варианты
                     items = data.get("data", []) or data.get("items", []) or data.get("news", [])
             else:
                 logger.error(f"{name}: Unexpected API response type: {type(data)}")
@@ -383,9 +369,7 @@ class NewsScraper:
             logger.info(f"{name}: Обрабатываем {len(items)} новостей")
 
             for item in items:
-                # Защита от неправильного формата элемента
                 if not isinstance(item, dict):
-                    logger.warning(f"{name}: элемент не dict, а {type(item)}")
                     continue
 
                 title = item.get("name", "").strip() or item.get("title", "").strip()
@@ -402,11 +386,23 @@ class NewsScraper:
                 if raw_date:
                     published_at = self._parse_date(str(raw_date))
 
+                # КРИТИЧЕСКОЕ ЛОГИРОВАНИЕ ДАТ
+                if published_at:
+                    logger.info(f"  📅 [{title[:40]}...] → Дата из API: {published_at.strftime('%Y-%m-%d %H:%M')}")
+                else:
+                    logger.warning(f"  ⚠️ [{title[:40]}...] → Дата в API отсутствует, парсим страницу...")
+
                 # Полный текст и картинку берём со страницы статьи
                 full_text, image_url, page_date = self._fetch_full_text_and_image(link)
 
                 # ВАЖНО: если дата из API пустая, используем дату из страницы
                 final_date = published_at or page_date
+
+                if final_date:
+                    days_old = (datetime.now() - final_date).days
+                    logger.info(f"  ✅ ФИНАЛЬНАЯ ДАТА: {final_date.strftime('%Y-%m-%d %H:%M')} (возраст: {days_old} дней)")
+                else:
+                    logger.error(f"  ❌ [{title[:40]}...] → ДАТА НЕ НАЙДЕНА НИГДЕ!")
 
                 news.append({
                     "title": title,
@@ -426,69 +422,10 @@ class NewsScraper:
 
         return news
 
-    def _scrape_direct_source(self, config: Dict) -> List[Dict]:
-        """Парсит страницу со списком статей по селекторам (старый метод для не-SPA)."""
-        name = config.get("name", "Unknown")
-        url = config.get("url")
-        article_sel = config.get("article_selector")
-        title_sel = config.get("title_selector")
-        link_sel = config.get("link_selector", "a")
-        base_url = config.get("base_url", "").rstrip("/")
-
-        if not url or not article_sel or not title_sel:
-            logger.warning(f"Direct source '{name}' skipped: missing config")
-            return []
-
-        news = []
-        try:
-            logger.info(f"Direct scraping {name}...")
-            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"}
-            resp = requests.get(url, headers=headers, timeout=15, verify=False)
-            resp.raise_for_status()
-
-            soup = BeautifulSoup(resp.content, "html.parser")
-            articles = soup.select(article_sel)[:20]
-
-            for art in articles:
-                title_el = art.select_one(title_sel)
-                link_el = art.select_one(link_sel) if link_sel else title_el
-
-                if not title_el or not link_el:
-                    continue
-
-                title = title_el.get_text(strip=True)
-                href = link_el.get("href", "")
-
-                if not href:
-                    continue
-
-                link = (base_url + href) if href.startswith("/") else href
-                if not link.startswith("http"):
-                    link = base_url + "/" + link
-
-                full_text, image_url, published_at = self._fetch_full_text_and_image(link)
-
-                news.append({
-                    "title": title,
-                    "original_text": full_text or title,
-                    "source_name": name,
-                    "source_url": link,
-                    "image_url": image_url,
-                    "published_at": published_at,
-                })
-        except Exception as e:
-            logger.error(f"Error scraping {name}: {e}")
-        return news
-
     # ========== УЛУЧШЕННЫЙ ПАРСИНГ ДАТ ==========
     def _extract_publish_date(self, soup: BeautifulSoup) -> Optional[datetime]:
-        """
-        Извлекает дату публикации из:
-        1. Мета-тегов (og:published_time и т.д.)
-        2. <time datetime="">
-        3. Видимого текста страницы (регулярные выражения)
-        """
-        # 1. Пробуем мета-теги
+        """Извлекает дату публикации из мета-тегов, <time> и текста"""
+        # 1. Мета-теги
         for prop in ("article:published_time", "published_time", "date", "og:updated_time"):
             meta = soup.find("meta", property=prop) or soup.find("meta", attrs={"name": prop})
             if meta and meta.get("content"):
@@ -496,14 +433,14 @@ class NewsScraper:
                 if parsed:
                     return parsed
 
-        # 2. Пробуем <time datetime="">
+        # 2. <time datetime="">
         time_el = soup.find("time", attrs={"datetime": True})
         if time_el and time_el.get("datetime"):
             parsed = self._parse_date(time_el["datetime"])
             if parsed:
                 return parsed
 
-        # 3. Ищем дату в видимом тексте страницы через regex
+        # 3. Текст страницы
         text = soup.get_text()
         date_from_text = self._extract_date_from_text(text)
         if date_from_text:
@@ -512,21 +449,14 @@ class NewsScraper:
         return None
 
     def _extract_date_from_text(self, text: str) -> Optional[datetime]:
-        """
-        Ищет дату в тексте через регулярные выражения.
-        Поддерживает форматы:
-        - "18 февраля 2025"
-        - "18.02.2025"
-        - "2025-02-18"
-        """
-        # Месяцы на русском
+        """Ищет дату в тексте через regex"""
         months_ru = {
             "января": 1, "февраля": 2, "марта": 3, "апреля": 4,
             "мая": 5, "июня": 6, "июля": 7, "августа": 8,
             "сентября": 9, "октября": 10, "ноября": 11, "декабря": 12
         }
 
-        # 1. Формат "18 февраля 2025"
+        # 1. "18 февраля 2025"
         pattern1 = r"(\d{1,2})\s+(января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)\s+(\d{4})"
         match = re.search(pattern1, text, re.IGNORECASE)
         if match:
@@ -538,7 +468,7 @@ class NewsScraper:
             except ValueError:
                 pass
 
-        # 2. Формат "18.02.2025" или "18/02/2025"
+        # 2. "18.02.2025"
         pattern2 = r"(\d{1,2})[./](\d{1,2})[./](\d{4})"
         match = re.search(pattern2, text)
         if match:
@@ -550,7 +480,7 @@ class NewsScraper:
             except ValueError:
                 pass
 
-        # 3. Формат ISO "2025-02-18"
+        # 3. ISO "2025-02-18"
         pattern3 = r"(\d{4})-(\d{1,2})-(\d{1,2})"
         match = re.search(pattern3, text)
         if match:
@@ -565,7 +495,7 @@ class NewsScraper:
         return None
 
     def _parse_date(self, value: str) -> Optional[datetime]:
-        """Парсит ISO дату из строки."""
+        """Парсит ISO дату из строки"""
         if not value or not value.strip():
             return None
         value = value.strip()[:25]
