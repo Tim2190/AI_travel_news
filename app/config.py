@@ -13,7 +13,9 @@ class Settings(BaseSettings):
     
     # Модели (можно переопределить через ENV, но лучше оставить дефолты)
     # Используем 2.0 Flash как основную "рабочую лошадку"
-    GEMINI_MODEL: str = "gemini-2.0-flash" 
+    GEMINI_MODEL: str = "gemini-2.0-flash"
+
+    GROQ_API_KEY: str = ""
 
     # --- TELEGRAM ---
     TELEGRAM_BOT_TOKEN: str
