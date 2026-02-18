@@ -72,7 +72,7 @@ async def scrape_news_task():
     db = SessionLocal()
     try:
         logger.info("Starting scraping cycle...")
-        new_items = scraper.scrape()
+        new_items = await scraper.scrape_async()
         if not new_items:
             logger.warning("No news found from direct sources.")
             return
