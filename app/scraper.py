@@ -1,35 +1,41 @@
-import requests
-from bs4 import BeautifulSoup
-from datetime import datetime, timezone
 import logging
+import requests
+import re
 import urllib3
-from typing import List, Dict, Optional, Tuple
-import asyncio
-from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
+from bs4 import BeautifulSoup
+from typing import List, Dict, Optional
+from .config import settings
 
-# Playwright — только для gov.kz (получение токенов)
-try:
-    from playwright.async_api import async_playwright
-    PLAYWRIGHT_AVAILABLE = True
-except ImportError:
-    PLAYWRIGHT_AVAILABLE = False
-
-# Отключаем надоедливые предупреждения о SSL
+# Отключаем предупреждения SSL
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 logger = logging.getLogger(__name__)
 
-# ИСТОЧНИКИ: ОФИЦИАЛЬНЫЕ САЙТЫ ГОСУДАРСТВЕННЫХ ОРГАНОВ (РУССКИЕ ВЕРСИИ)
-DIRECT_SCRAPE_SOURCES: List[Dict] = [
-    # --- ВЫСШЕЕ РУКОВОДСТВО ---
+# Словари для парсинга текстовых дат
+MONTHS_RU = {
+    "января": 1, "февраля": 2, "марта": 3, "апреля": 4, "мая": 5, "июня": 6,
+    "июля": 7, "августа": 8, "сентября": 9, "октября": 10, "ноября": 11, "декабря": 12,
+    "янв": 1, "фев": 2, "мар": 3, "апр": 4, "май": 5, "июн": 6,
+    "июл": 7, "авг": 8, "сен": 9, "окт": 10, "ноя": 11, "дек": 12
+}
+
+MONTHS_KZ = {
+    "қаңтар": 1, "ақпан": 2, "наурыз": 3, "сәуір": 4, "мамыр": 5, "маусым": 6,
+    "шілде": 7, "тамыз": 8, "қыркүйек": 9, "қазан": 10, "қараша": 11, "желтоқсан": 12,
+    "қаң": 1, "ақп": 2, "нау": 3, "сәу": 4, "мам": 5, "мау": 6,
+    "шіл": 7, "там": 8, "қыр": 9, "қаз": 10, "қар": 11, "жел": 12
+}
+
+# 1. Прямые источники (Akorda, PrimeMinister) - парсим HTML
+DIRECT_SOURCES = [
     {
         "name": "Akorda (Президент)",
         "url": "https://www.akorda.kz/ru/events",
-        "article_selector": ".event-item, .news-list__item",
+        "article_selector": ".event-item, .news-list__item, div.item",
         "title_selector": "h3 a, .title a, a",
         "link_selector": "h3 a, .title a, a",
-        "base_url": "https://www.akorda.kz",
-        "gov_kz": False,
+        "base_url": "https://www.akorda.kz"
     },
     {
         "name": "PrimeMinister (Правительство)",
@@ -37,251 +43,226 @@ DIRECT_SCRAPE_SOURCES: List[Dict] = [
         "article_selector": ".news_item, .card, .post-item",
         "title_selector": ".news_title a, .card-title a, a",
         "link_selector": "a",
-        "base_url": "https://primeminister.kz",
-        "gov_kz": False,
-    },
-    # --- МИНИСТЕРСТВА (GOV.KZ - SPA) ---
-    {"name": "МинНацЭкономики", "url": "https://www.gov.kz/memleket/entities/economy/press/news?lang=ru", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "economy"},
-    {"name": "МинФин", "url": "https://www.gov.kz/memleket/entities/minfin/press/news?lang=ru", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "minfin"},
-    {"name": "МИД РК", "url": "https://www.gov.kz/memleket/entities/mfa/press/news?lang=ru", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "mfa"},
-    {"name": "МВД РК", "url": "https://www.gov.kz/memleket/entities/qriim/press/news?lang=ru", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "qriim"},
-    {"name": "МинТруда", "url": "https://www.gov.kz/memleket/entities/enbek/press/news?lang=ru", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "enbek"},
-    {"name": "МинЗдрав", "url": "https://www.gov.kz/memleket/entities/dsm/press/news?lang=ru", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "dsm"},
-    {"name": "МинПросвещения", "url": "https://www.gov.kz/memleket/entities/edu/press/news?lang=ru", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "edu"},
-    {"name": "МинНауки", "url": "https://www.gov.kz/memleket/entities/sci/press/news?lang=ru", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "sci"},
-    {"name": "МинПромСтрой", "url": "https://www.gov.kz/memleket/entities/mps/press/news?lang=ru", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "mps"},
-    {"name": "МинТранспорт", "url": "https://www.gov.kz/memleket/entities/transport/press/news?lang=ru", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "transport"},
-    {"name": "МинЦифры", "url": "https://www.gov.kz/memleket/entities/mdai/press/news?lang=ru", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "mdai"},
-    {"name": "МинКультуры", "url": "https://www.gov.kz/memleket/entities/mam/press/news?lang=ru", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "mam"},
-    {"name": "МинТуризм", "url": "https://www.gov.kz/memleket/entities/tsm/press/news?lang=ru", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "tsm"},
-    {"name": "МинЭкологии", "url": "https://www.gov.kz/memleket/entities/ecogeo/press/news?lang=ru", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "ecogeo"},
-    {"name": "МинСельХоз", "url": "https://www.gov.kz/memleket/entities/moa/press/news?lang=ru", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "moa"},
-    {"name": "МинЭнерго", "url": "https://www.gov.kz/memleket/entities/energo/press/news?lang=ru", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "energo"},
-    {"name": "МинЮст", "url": "https://www.gov.kz/memleket/entities/adilet/press/news?lang=ru", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "adilet"},
-    {"name": "МЧС РК", "url": "https://www.gov.kz/memleket/entities/emer/press/news?lang=ru", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "emer"},
-    {"name": "МинТорговли", "url": "https://www.gov.kz/memleket/entities/mti/press/news?lang=ru", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "mti"},
-    # --- АКИМАТЫ ---
-    {"name": "Акимат Алматы", "url": "https://www.gov.kz/memleket/entities/almaty/press/news?lang=ru", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "almaty"},
-    {"name": "Акимат Астаны", "url": "https://www.gov.kz/memleket/entities/astana/press/news?lang=ru", "base_url": "https://www.gov.kz", "gov_kz": True, "project": "astana"},
+        "base_url": "https://primeminister.kz"
+    }
 ]
 
-_gov_kz_tokens: Optional[Dict] = None
+# 2. GOV.KZ (Все министерства и акиматы) - используем API ID
+# Я перевел все твои ссылки в ID проектов. Это ВСЕ твои источники.
+GOV_KZ_PROJECTS = {
+    "МинНацЭкономики": 4,
+    "МинФин": 2,
+    "МИД РК": 6,
+    "МВД РК": 11,
+    "МинТруда": 21,
+    "МинЗдрав": 17,
+    "МинПросвещения": 14,
+    "МинНауки": 15,
+    "МинПромСтрой": 3,
+    "МинТранспорт": 22,
+    "МинЦифры": 8,
+    "МинКультуры": 19,
+    "МинТуризм": 24,
+    "МинЭкологии": 16,
+    "МинСельХоз": 18,
+    "МинЭнерго": 20,
+    "МинЮст": 9,
+    "МЧС РК": 5,
+    "МинТорговли": 23,
+    "Акимат Алматы": 118,
+    "Акимат Астаны": 105
+}
 
-async def _fetch_gov_kz_tokens() -> Optional[Dict]:
-    """Усиленная версия получения токенов с ожиданием контента и имитацией активности"""
-    if not PLAYWRIGHT_AVAILABLE:
-        return None
-    tokens = {}
-    try:
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(
-                headless=True, 
-                args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
-            )
-            context = await browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-                viewport={"width": 1920, "height": 1080},
-                locale="ru-RU"
-            )
-            page = await context.new_page()
-            
-            def handle_request(request):
-                if "api/v1/public/content-manager/news" in request.url:
-                    h = request.headers
-                    if h.get("hash") and h.get("token"):
-                        tokens["hash"] = h["hash"]
-                        tokens["token"] = h["token"]
-                        tokens["user-agent"] = h.get("user-agent", "")
-                        logger.info("🎯 ТОКЕНЫ ПОЙМАНЫ!")
+class Scraper:
+    def __init__(self):
+        self.session = requests.Session()
+        self.session.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            "Accept": "application/json, text/html, */*"
+        })
 
-            page.on("request", handle_request)
-            
-            try:
-                logger.info("🌍 Открываем МИД РК (он стабильнее) за токенами...")
-                # Увеличили таймаут для медленного облачного интернета
-                await page.goto("https://www.gov.kz/memleket/entities/mfa/press/news?lang=ru", timeout=90000, wait_until="networkidle")
-                
-                # Даем JS 15 секунд на выполнение всех фоновых запросов
-                await asyncio.sleep(15)
-                
-                if not tokens:
-                    logger.info("⏳ Токены не пойманы автоматически, имитируем активность (скролл)...")
-                    await page.mouse.wheel(0, 500)
-                    await asyncio.sleep(5)
-                    # Если всё еще нет, ждем селектор как последний шанс
-                    await page.wait_for_selector("a[href*='/press/news/details/']", timeout=15000)
-            except Exception as e:
-                logger.warning(f"⚠️ Playwright не дождался идеальной загрузки: {e}")
-            
-            await browser.close()
-    except Exception as e:
-        logger.error(f"❌ Фатальная ошибка Playwright: {e}")
-        return None
+    def parse_date(self, date_str: str) -> Optional[datetime]:
+        """Универсальный парсер даты (ISO + Текст)."""
+        if not date_str:
+            return None
         
-    return tokens if tokens else None
+        date_str = str(date_str).strip().lower()
 
-def run_async_in_thread(coro):
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(asyncio.run, coro)
-        return future.result()
+        # 1. Попытка распарсить ISO (из API Gov.kz)
+        try:
+            iso_clean = date_str.split("+")[0].split(".")[0].replace("z", "")
+            if "t" in iso_clean:
+                return datetime.fromisoformat(iso_clean)
+            if len(iso_clean) == 10 and "-" in iso_clean:
+                return datetime.strptime(iso_clean, "%Y-%m-%d")
+        except: pass
 
-class NewsScraper:
-    def __init__(self, direct_sources: List[Dict] = None):
-        self.direct_sources = direct_sources or DIRECT_SCRAPE_SOURCES
+        # 2. Попытка распарсить текстовую дату (из HTML)
+        clean_text = re.sub(r"\s+\d{1,2}:\d{2}.*", "", date_str) 
+        clean_text = re.sub(r"[^\w\s]", "", clean_text)
+        
+        parts = clean_text.split()
+        if len(parts) >= 2:
+            try:
+                day = int(re.sub(r"\D", "", parts[0]))
+                month_str = parts[1]
+                year = datetime.now().year 
+                
+                if len(parts) > 2 and parts[2].isdigit():
+                    possible_year = int(parts[2])
+                    if 2020 < possible_year < 2030:
+                        year = possible_year
+
+                month = MONTHS_RU.get(month_str) or MONTHS_KZ.get(month_str)
+                if month:
+                    return datetime(year, month, day)
+            except: pass
+            
+        return None
 
     def scrape(self) -> List[Dict]:
+        """Главный метод запуска."""
         all_news = []
-        regular_sources = [s for s in self.direct_sources if not s.get("gov_kz")]
-        for source in regular_sources:
-            all_news.extend(self._scrape_direct_source(source))
+        
+        # 1. Сбор через API (Gov.kz) - быстро и надежно
+        all_news.extend(self.scrape_gov_kz_api())
 
-        gov_sources = [s for s in self.direct_sources if s.get("gov_kz")]
-        if gov_sources:
+        # 2. Сбор через HTML (Akorda, PM)
+        for source in DIRECT_SOURCES:
+            all_news.extend(self.scrape_direct(source))
+
+        return all_news
+
+    def scrape_gov_kz_api(self) -> List[Dict]:
+        """Сбор новостей через официальное API Gov.kz"""
+        results = []
+        base_api = "https://gov.kz/api/v1/public/news"
+        
+        for name, project_id in GOV_KZ_PROJECTS.items():
             try:
-                gov_news = run_async_in_thread(self._scrape_all_gov_kz(gov_sources))
-                all_news.extend(gov_news)
+                # Запрашиваем 5 последних новостей
+                params = {"projects": project_id, "lang": "ru", "limit": 5}
+                resp = self.session.get(base_api, params=params, timeout=10, verify=False)
+                
+                if resp.status_code == 200:
+                    data = resp.json()
+                    # Иногда API отдает список, иногда объект с полем content
+                    items = data if isinstance(data, list) else data.get("content", [])
+                    
+                    for item in items:
+                        title = item.get("title")
+                        if not title: continue
+
+                        # ДАТА (Берем из API, она там точная)
+                        pub_date = self.parse_date(item.get("publish_date") or item.get("created_date"))
+                        if not pub_date: continue 
+
+                        # ТЕКСТ (Чистим HTML)
+                        body = item.get("body") or ""
+                        soup = BeautifulSoup(body, "html.parser")
+                        text = soup.get_text(separator="\n").strip()
+
+                        # ССЫЛКА (Генерируем правильную ссылку на сайт)
+                        news_id = item.get("id")
+                        # projects возвращает список [4], берем первый элемент
+                        proj_id_from_api = item.get("projects", [project_id])[0]
+                        link = f"https://gov.kz/memleket/entities/{proj_id_from_api}/press/news/details/{news_id}?lang=ru"
+                        
+                        # КАРТИНКА
+                        img = None
+                        if item.get("visual_content"):
+                             img = item["visual_content"][0].get("source")
+
+                        results.append({
+                            "title": title,
+                            "original_text": text[:4000],
+                            "source_name": name,
+                            "source_url": link,
+                            "published_at": pub_date,
+                            "image_url": img
+                        })
+                logger.info(f"API {name}: OK")
             except Exception as e:
-                logger.error(f"Critical error scraping gov.kz: {e}")
+                logger.error(f"API {name} Error: {e}")
+                
+        return results
 
-        logger.info(f"Total news gathered: {len(all_news)}")
-        return all_news
-
-    async def _scrape_all_gov_kz(self, sources: List[Dict]) -> List[Dict]:
-        global _gov_kz_tokens
-        if _gov_kz_tokens is None:
-            logger.info("🔑 Получаем токены gov.kz...")
-            _gov_kz_tokens = await _fetch_gov_kz_tokens()
-
-        if not _gov_kz_tokens:
-            logger.error("Не удалось получить токены gov.kz")
-            return []
-
-        all_news = []
-        for source in sources:
-            all_news.extend(self._scrape_gov_kz_source(source, _gov_kz_tokens))
-        return all_news
-
-    def _scrape_gov_kz_source(self, config: Dict, tokens: Dict) -> List[Dict]:
-        name = config.get("name", "Unknown")
-        project = config.get("project")
-        if not project: return []
-
-        api_url = f"https://www.gov.kz/api/v1/public/content-manager/news?sort-by=created_date:DESC&projects=eq:{project}&page=1&size=10"
-        headers = {
-            "accept": "application/json", 
-            "accept-language": "ru",
-            "user-agent": tokens.get("user-agent", "Mozilla/5.0"),
-            "referer": f"https://www.gov.kz/memleket/entities/{project}/press/news?lang=ru",
-            "hash": tokens["hash"], 
-            "token": tokens["token"],
-        }
+    def scrape_direct(self, config: Dict) -> List[Dict]:
+        """Парсинг HTML для Akorda и PM (где нет открытого API)"""
+        results = []
+        name = config["name"]
         
-        news = []
         try:
-            logger.info(f"API запрос: {name}...")
-            resp = requests.get(api_url, headers=headers, timeout=15, verify=False)
-            if resp.status_code == 200:
-                data = resp.json()
-                items = data if isinstance(data, list) else data.get("content", [])
-                for item in items:
-                    title = item.get("title") or item.get("name")
-                    slug_id = item.get("id")
-                    if title and slug_id:
-                        title = title.strip()
-                        link = f"https://www.gov.kz/memleket/entities/{project}/press/news/details/{slug_id}?lang=ru"
-                        raw_date = item.get("createdDate") or item.get("publishedDate")
-                        pub_date = self._parse_date(str(raw_date))
-                        full_text, image, _ = self._fetch_full_text_and_image(link)
-                        news.append({
-                            "title": title, "original_text": full_text or title,
-                            "source_name": name, "source_url": link,
-                            "image_url": image, "published_at": pub_date
-                        })
-        except Exception as e:
-            logger.error(f"Error {name}: {e}")
-        return news
-
-    def _scrape_direct_source(self, config: Dict) -> List[Dict]:
-        name = config.get("name", "Unknown")
-        url = config.get("url")
-        if not url: return []
-        
-        news = []
-        try:
-            logger.info(f"Direct scraping {name}...")
-            # Улучшенные заголовки для обхода простых блокировок
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-                "Referer": "https://www.google.com/"
-            }
-            resp = requests.get(url, headers=headers, timeout=25, verify=False)
+            resp = self.session.get(config["url"], timeout=20, verify=False)
+            if resp.status_code != 200: return []
             
-            logger.info(f"[{name}] Response Status: {resp.status_code}")
-            
-            if resp.status_code != 200:
-                logger.warning(f"[{name}] Не удалось загрузить страницу (код {resp.status_code})")
-                return []
-
             soup = BeautifulSoup(resp.content, "html.parser")
-            articles = soup.select(config.get("article_selector"))[:10]
+            items = soup.select(config["article_selector"])[:5]
             
-            # ДИАГНОСТИКА: Если контент не найден, смотрим заголовок страницы
-            if not articles:
-                page_title = soup.title.string if soup.title else "Заголовок не найден"
-                logger.warning(f"[{name}] Статей по селектору не найдено. Заголовок страницы: {page_title}")
-            else:
-                logger.info(f"[{name}] Найдено {len(articles)} элементов.")
+            for item in items:
+                link_el = item.select_one(config["link_selector"])
+                if not link_el: continue
+                
+                href = link_el.get("href")
+                if not href: continue
+                
+                full_link = config["base_url"] + href if href.startswith("/") else href
+                title = link_el.get_text(strip=True)
 
-            for art in articles:
-                title_el = art.select_one(config.get("title_selector"))
-                link_el = art.select_one(config.get("link_selector", "a"))
-                if title_el:
-                    title = title_el.get_text(strip=True)
-                    href = link_el.get("href") if link_el else title_el.get("href")
-                    if href:
-                        base = config.get("base_url", "")
-                        link = base + href if href.startswith("/") else href
-                        full_text, image, pub_date = self._fetch_full_text_and_image(link)
-                        news.append({
-                            "title": title, "original_text": full_text or title,
-                            "source_name": name, "source_url": link,
-                            "image_url": image, "published_at": pub_date
-                        })
+                # Заходим внутрь за датой
+                full_text, image, pub_date = self.fetch_details(full_link)
+                
+                # Если внутри даты нет, ищем снаружи
+                if not pub_date:
+                    date_el = item.find(string=re.compile(r"\d{1,2}\s+[а-яА-Я]{3,}\s+\d{4}"))
+                    if date_el:
+                        pub_date = self.parse_date(date_el)
+                
+                if pub_date:
+                    results.append({
+                        "title": title,
+                        "original_text": full_text or title,
+                        "source_name": name,
+                        "source_url": full_link,
+                        "published_at": pub_date,
+                        "image_url": image
+                    })
+
+            logger.info(f"Direct {name}: {len(results)} items")
         except Exception as e:
-            logger.error(f"Error {name}: {e}")
-        return news
+            logger.error(f"Direct {name} Error: {e}")
+            
+        return results
 
-    def _fetch_full_text_and_image(self, url: str):
+    def fetch_details(self, url: str):
+        """Загружает страницу новости и ищет детали."""
         try:
-            resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15, verify=False)
-            if resp.status_code != 200: return None, None, datetime.now()
+            resp = self.session.get(url, timeout=10, verify=False)
             soup = BeautifulSoup(resp.content, "html.parser")
-            paragraphs = soup.find_all("p")
-            text = "\n".join([p.get_text(strip=True) for p in paragraphs if len(p.get_text()) > 50])
-            img = soup.find("meta", property="og:image")
-            image_url = img.get("content") if img else None
-            pub_date = self._extract_publish_date(soup)
-            return text, image_url, pub_date
+            
+            text = "\n".join([p.get_text(strip=True) for p in soup.find_all("p")])
+            
+            img = None
+            meta_img = soup.find("meta", property="og:image")
+            if meta_img: img = meta_img.get("content")
+
+            pub_date = None
+            # Мета-теги
+            for prop in ["article:published_time", "published_time", "date"]:
+                meta = soup.find("meta", property=prop) or soup.find("meta", attrs={"name": prop})
+                if meta:
+                    pub_date = self.parse_date(meta.get("content"))
+                    if pub_date: break
+            
+            # Текст (18 февраля 2026)
+            if not pub_date:
+                date_pattern = re.compile(r"\d{1,2}\s+[а-яА-Яәіңғүұқөһ]{3,}\s+\d{4}")
+                date_text = soup.find(string=date_pattern)
+                if date_text:
+                    pub_date = self.parse_date(date_text)
+
+            return text, img, pub_date
         except:
-            return None, None, datetime.now()
+            return None, None, None
 
-    def _extract_publish_date(self, soup: BeautifulSoup):
-        for prop in ("article:published_time", "published_time", "date"):
-            meta = soup.find("meta", property=prop) or soup.find("meta", attrs={"name": prop})
-            if meta and meta.get("content"):
-                return self._parse_date(meta["content"])
-        return datetime.now()
-
-    def _parse_date(self, value: str):
-        if not value or value == "None": return datetime.now()
-        value = str(value).strip()[:25]
-        for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
-            try:
-                if value.endswith("Z"): value = value[:-1] + "+00:00"
-                d = datetime.fromisoformat(value.replace("Z", "+00:00")) if "+" in value else datetime.strptime(value[:10], "%Y-%m-%d")
-                return d.astimezone(timezone.utc).replace(tzinfo=None)
-            except: continue
-        return datetime.now()
-
-scraper = NewsScraper()
+scraper = Scraper()
