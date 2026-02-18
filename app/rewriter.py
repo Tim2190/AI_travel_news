@@ -7,10 +7,10 @@ from .config import settings
 
 logger = logging.getLogger(__name__)
 
-# --- НАСТРОЙКИ (БЕЗ ИЗМЕНЕНИЙ) ---
+# --- НАСТРОЙКИ (Переходим на 2.5-flash) ---
 MODEL_KZ = "gemini-2.5-flash"        
-MODEL_RU_JOURNALIST = "gemini-2.0-flash" 
-MODEL_RU_EDITOR = "gemini-2.0-flash"
+MODEL_RU_JOURNALIST = "gemini-2.5-flash" 
+MODEL_RU_EDITOR = "gemini-2.5-flash"
 MAX_TG_CAPTION_LEN = 800  
 
 class GeminiRewriter:
@@ -27,7 +27,7 @@ class GeminiRewriter:
     async def rewrite(self, text: str) -> str:
         if not text: return ""
         
-        # Даем API "продышаться" перед новым запросом
+        # Даем API "продышаться" перед новым циклом
         await asyncio.sleep(2) 
 
         if self._is_kazakh(text):
@@ -68,9 +68,9 @@ class GeminiRewriter:
             logger.error(f"KZ Error: {e}")
             return text[:MAX_TG_CAPTION_LEN]
 
-    # --- РУССКИЙ (С ЗАЩИТОЙ ОТ ПЕРЕГРУЗКИ) ---
+    # --- РУССКИЙ (Двухэтапный на 2.5 Flash) ---
     async def _process_ru_pipeline(self, text: str) -> str:
-        logger.info("🇷🇺 RU Pipeline Started...")
+        logger.info(f"🇷🇺 RU Pipeline Started on {MODEL_RU_JOURNALIST}...")
 
         # Шаг 1: Журналист
         draft = await self._run_agent(
@@ -82,9 +82,8 @@ class GeminiRewriter:
         )
         if not draft: return text[:MAX_TG_CAPTION_LEN]
 
-        # --- КРИТИЧЕСКАЯ ПРАВКА: Ждем 10 секунд перед следующим запросом ---
-        # Это предотвращает 429 ошибку между шагами Journalist и Editor
-        logger.info("⏳ Охлаждение API (10 сек)...")
+        # --- ЗАЩИТА: Ждем 10 секунд, чтобы обнулить минутную квоту ---
+        logger.info("⏳ Охлаждение API (10 сек) перед вторым этапом...")
         await asyncio.sleep(10)
 
         # Шаг 2: Редактор
@@ -117,9 +116,8 @@ class GeminiRewriter:
             )
             return response.text
         except Exception as e:
-            # Если словили 429, логируем это четко
             if "429" in str(e):
-                logger.warning(f"⚠️ {role} попал под лимит 429. Нужно больше времени на отдых.")
+                logger.warning(f"⚠️ {role} ({model}) - лимит 429. Нужно увеличить паузу.")
             else:
                 logger.error(f"{role} Error: {e}")
             return content if role == "Редактор" else None
