@@ -3,8 +3,8 @@ from bs4 import BeautifulSoup
 from datetime import datetime, timedelta, timezone
 import logging
 import urllib3
+import re
 from typing import List, Dict, Optional, Tuple
-import asyncio
 
 # Playwright — только для gov.kz (получение токенов)
 try:
@@ -211,7 +211,7 @@ async def _fetch_gov_kz_tokens() -> Optional[Dict]:
         async with async_playwright() as p:
             browser = await p.chromium.launch(
                 headless=True,
-                args=["--no-sandbox", "--disable-setuid-sandbox"]
+                args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
             )
             context = await browser.new_context(
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
@@ -255,27 +255,41 @@ class NewsScraper:
     def __init__(self, direct_sources: List[Dict] = None):
         self.direct_sources = direct_sources or DIRECT_SCRAPE_SOURCES
 
-    def scrape(self) -> List[Dict]:
+    # ========== ИСПРАВЛЕНИЕ ПРОБЛЕМЫ 1: async/await вместо loop.run_until_complete ==========
+    async def scrape_async(self) -> List[Dict]:
+        """
+        Async-версия scrape() для интеграции с FastAPI.
+        Вызывай её из FastAPI так: await scraper.scrape_async()
+        """
         all_news = []
 
         # Разделяем источники на gov.kz и обычные
         gov_sources = [s for s in self.direct_sources if s.get("gov_kz")]
         regular_sources = [s for s in self.direct_sources if not s.get("gov_kz")]
 
-        # Обычные источники — старый метод BS4
-        for source in regular_sources:
-            all_news.extend(self._scrape_direct_source(source))
+        # Обычные источники — синхронный BS4 (в отдельном потоке чтобы не блокировать)
+        import asyncio
+        loop = asyncio.get_event_loop()
+        regular_news = await loop.run_in_executor(
+            None,
+            self._scrape_all_regular_sources,
+            regular_sources
+        )
+        all_news.extend(regular_news)
 
-        # gov.kz источники — гибридный метод через API
+        # gov.kz источники — async гибридный метод
         if gov_sources:
-            try:
-                loop = asyncio.get_event_loop()
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-            all_news.extend(loop.run_until_complete(self._scrape_all_gov_kz(gov_sources)))
+            gov_news = await self._scrape_all_gov_kz(gov_sources)
+            all_news.extend(gov_news)
 
         logger.info(f"Total news gathered: {len(all_news)}")
+        return all_news
+
+    def _scrape_all_regular_sources(self, sources: List[Dict]) -> List[Dict]:
+        """Синхронная обработка обычных источников (не gov.kz)"""
+        all_news = []
+        for source in sources:
+            all_news.extend(self._scrape_direct_source(source))
         return all_news
 
     async def _scrape_all_gov_kz(self, sources: List[Dict]) -> List[Dict]:
@@ -353,13 +367,16 @@ class NewsScraper:
                 # Полный текст и картинку берём со страницы статьи
                 full_text, image_url, page_date = self._fetch_full_text_and_image(link)
 
+                # ВАЖНО: если дата из API пустая, используем дату из страницы
+                final_date = published_at or page_date
+
                 news.append({
                     "title": title,
                     "original_text": full_text or title,
                     "source_name": name,
                     "source_url": link,
                     "image_url": image_url,
-                    "published_at": published_at or page_date,
+                    "published_at": final_date,
                 })
 
         except Exception as e:
@@ -421,18 +438,93 @@ class NewsScraper:
             logger.error(f"Error scraping {name}: {e}")
         return news
 
+    # ========== ИСПРАВЛЕНИЕ ПРОБЛЕМЫ 2: Улучшенный парсинг дат ==========
     def _extract_publish_date(self, soup: BeautifulSoup) -> Optional[datetime]:
-        """Извлекает дату публикации."""
-        for prop in ("article:published_time", "published_time", "date"):
+        """
+        Извлекает дату публикации из:
+        1. Мета-тегов (og:published_time и т.д.)
+        2. <time datetime="">
+        3. Видимого текста страницы (регулярные выражения)
+        """
+        # 1. Пробуем мета-теги
+        for prop in ("article:published_time", "published_time", "date", "og:updated_time"):
             meta = soup.find("meta", property=prop) or soup.find("meta", attrs={"name": prop})
             if meta and meta.get("content"):
-                return self._parse_date(meta["content"])
+                parsed = self._parse_date(meta["content"])
+                if parsed:
+                    return parsed
+
+        # 2. Пробуем <time datetime="">
         time_el = soup.find("time", attrs={"datetime": True})
         if time_el and time_el.get("datetime"):
-            return self._parse_date(time_el["datetime"])
+            parsed = self._parse_date(time_el["datetime"])
+            if parsed:
+                return parsed
+
+        # 3. Ищем дату в видимом тексте страницы через regex
+        # Паттерны: "18 февраля 2025", "18.02.2025", "2025-02-18"
+        text = soup.get_text()
+        date_from_text = self._extract_date_from_text(text)
+        if date_from_text:
+            return date_from_text
+
+        return None
+
+    def _extract_date_from_text(self, text: str) -> Optional[datetime]:
+        """
+        Ищет дату в тексте через регулярные выражения.
+        Поддерживает форматы:
+        - "18 февраля 2025"
+        - "18.02.2025"
+        - "2025-02-18"
+        """
+        # Месяцы на русском
+        months_ru = {
+            "января": 1, "февраля": 2, "марта": 3, "апреля": 4,
+            "мая": 5, "июня": 6, "июля": 7, "августа": 8,
+            "сентября": 9, "октября": 10, "ноября": 11, "декабря": 12
+        }
+
+        # 1. Формат "18 февраля 2025"
+        pattern1 = r"(\d{1,2})\s+(января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)\s+(\d{4})"
+        match = re.search(pattern1, text, re.IGNORECASE)
+        if match:
+            day = int(match.group(1))
+            month = months_ru[match.group(2).lower()]
+            year = int(match.group(3))
+            try:
+                return datetime(year, month, day)
+            except ValueError:
+                pass
+
+        # 2. Формат "18.02.2025" или "18/02/2025"
+        pattern2 = r"(\d{1,2})[./](\d{1,2})[./](\d{4})"
+        match = re.search(pattern2, text)
+        if match:
+            day = int(match.group(1))
+            month = int(match.group(2))
+            year = int(match.group(3))
+            try:
+                return datetime(year, month, day)
+            except ValueError:
+                pass
+
+        # 3. Формат ISO "2025-02-18"
+        pattern3 = r"(\d{4})-(\d{1,2})-(\d{1,2})"
+        match = re.search(pattern3, text)
+        if match:
+            year = int(match.group(1))
+            month = int(match.group(2))
+            day = int(match.group(3))
+            try:
+                return datetime(year, month, day)
+            except ValueError:
+                pass
+
         return None
 
     def _parse_date(self, value: str) -> Optional[datetime]:
+        """Парсит ISO дату из строки."""
         if not value or not value.strip():
             return None
         value = value.strip()[:25]
