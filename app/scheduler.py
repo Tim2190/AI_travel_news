@@ -68,75 +68,78 @@ def is_post_integrity_ok(final_text: str, source_url: str) -> bool:
 # --- ЗАДАЧИ ---
 
 async def scrape_news_task():
-    """Сбор новостей с жесткой фильтрацией дат."""
+    """Сбор новостей: сначала заголовки, потом проверка БД, потом мясо (enrich)."""
     db = SessionLocal()
     try:
-        logger.info("Starting scraping cycle...")
-        new_items = await scraper.scrape_async()
-        if not new_items:
+        logger.info("🚀 Starting scraping cycle (Async Mode)...")
+        # 1. Получаем «легкий» список (только заголовки и ссылки)
+        raw_items = await scraper.scrape_async() 
+        if not raw_items:
             logger.warning("No news found from direct sources.")
             return
 
-        # 1. Фильтр по ключевым словам
-        topic_keywords = [k.strip().lower() for k in settings.TOPIC_KEYWORDS.split(",") if k.strip()]
-        def matches_topic(item):
-            if not topic_keywords: return True
-            text_blob = (f"{item.get('title', '')} {item.get('original_text', '')}").lower()
-            return any(kw in text_blob for kw in topic_keywords)
-        
-        new_items = [i for i in new_items if matches_topic(i)]
-
-        # 2. ЖЕСТКИЙ ФИЛЬТР ПО ДАТЕ (Только за последние сутки)
-        cutoff = datetime.utcnow() - timedelta(days=settings.NEWS_MAX_AGE_DAYS)
-        def is_recent(item):
-            pub = item.get("published_at")
-            if not pub: # Если даты нет — в мусорку
-                return False
-            if getattr(pub, "tzinfo", None):
-                pub = pub.replace(tzinfo=None)
-            return pub >= cutoff
-        
-        new_items = [i for i in new_items if is_recent(i)]
-        
-        if not new_items:
-            logger.info("No recent news found after filtering.")
-            return
-
-        # 3. Скоринг и отбор
-        new_items.sort(key=lambda x: len(x.get('original_text', '')), reverse=True)
-        top_items = new_items[:10]
-
-        # 4. Сохранение (с проверкой дублей)
+        # 2. Подготовка к проверке дублей
         check_date = datetime.utcnow() - timedelta(days=3)
         recent_titles = [r[0] for r in db.query(NewsArchive.title).filter(NewsArchive.created_at >= check_date).all()]
         
         added = 0
-        for item in top_items:
-            if added >= 5: break
-            
+        cutoff = datetime.utcnow() - timedelta(days=settings.NEWS_MAX_AGE_DAYS)
+        topic_keywords = [k.strip().lower() for k in settings.TOPIC_KEYWORDS.split(",") if k.strip()]
+
+        for item in raw_items:
+            if added >= 10: break # Лимит на один цикл, чтобы не перегружать ИИ
+
             title = item["title"]
-            if db.query(NewsArchive).filter(NewsArchive.source_url == item["source_url"]).first():
+            url = item["source_url"]
+
+            # 3. БЫСТРЫЙ ФИЛЬТР: Проверка в БД по URL и заголовку
+            if db.query(NewsArchive).filter(NewsArchive.source_url == url).first():
                 continue
             if is_fuzzy_duplicate(title, recent_titles):
                 continue
 
+            # 4. ОБОГАЩЕНИЕ: Идем на страницу за текстом и датой (только для новых!)
+            # Используем asyncio.to_thread, чтобы синхронный requests не вешал бота
+            logger.info(f"🔎 Enriching: {title[:50]}...")
+            enriched_item = await asyncio.to_thread(scraper.enrich_news_with_content, item)
+
+            # 5. ФИЛЬТР ПО ТЕМЕ (теперь по полному тексту)
+            if topic_keywords:
+                text_blob = (f"{enriched_item['title']} {enriched_item.get('original_text', '')}").lower()
+                if not any(kw in text_blob for kw in topic_keywords):
+                    logger.info(f"⏭ Skip: Not in topic keywords.")
+                    continue
+
+            # 6. ФИЛЬТР ПО ДАТЕ (теперь дата есть!)
+            pub = enriched_item.get("published_at")
+            if not pub: 
+                pub = datetime.utcnow() # Фолбэк на сейчас, если в тексте нет даты
+            
+            if getattr(pub, "tzinfo", None):
+                pub = pub.replace(tzinfo=None)
+            
+            if pub < cutoff:
+                logger.info(f"⏭ Skip: Too old ({pub.strftime('%Y-%m-%d')})")
+                continue
+
+            # 7. СОХРАНЕНИЕ В БД
             db.add(NewsArchive(
-                title=title,
-                original_text=item["original_text"],
-                source_name=item["source_name"],
-                source_url=item["source_url"],
-                source_published_at=item.get("published_at"),
-                image_url=item["image_url"],
+                title=enriched_item["title"],
+                original_text=enriched_item.get("original_text") or enriched_item["title"],
+                source_name=enriched_item["source_name"],
+                source_url=enriched_item["source_url"],
+                source_published_at=pub,
+                image_url=enriched_item.get("image_url"),
                 status=NewsStatus.draft.value
             ))
             added += 1
             recent_titles.append(title)
-        
-        db.commit()
-        logger.info(f"Added {added} new drafts.")
+            db.commit() # Коммитим по одной, чтобы если что-то упадет, остальное выжило
+
+        logger.info(f"✅ Cycle finished. Added {added} new drafts.")
         
     except Exception as e:
-        logger.error(f"Scrape Error: {e}")
+        logger.error(f"Scrape Error: {e}", exc_info=True)
     finally:
         db.close()
 
