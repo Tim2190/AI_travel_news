@@ -303,7 +303,7 @@ class NewsScraper:
     def _scrape_gov_kz_source(self, config: Dict, tokens: Dict) -> List[Dict]:
         """
         Парсит ТОЛЬКО ТОП-3 новости из gov.kz источника через API.
-        БЕЗ парсинга full_text, image, date — это будет сделано позже.
+        Теперь СРАЗУ вытаскивает полный текст из JSON-ответа!
         """
         name = config.get("name", "Unknown")
         project = config.get("project")
@@ -322,13 +322,10 @@ class NewsScraper:
         headers = {
             "accept": "application/json",
             "accept-language": "ru",
-            "user-agent": tokens.get("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"),
+            "user-agent": tokens.get("user-agent", "Mozilla/5.0"),
             "referer": f"{base_url}/memleket/entities/{project}/press/news?lang=ru",
             "hash": tokens["hash"],
             "token": tokens["token"],
-            "sec-fetch-dest": tokens.get("sec-fetch-dest", "empty"),
-            "sec-fetch-mode": tokens.get("sec-fetch-mode", "cors"),
-            "sec-fetch-site": tokens.get("sec-fetch-site", "same-origin"),
             "origin": base_url,
         }
 
@@ -353,9 +350,8 @@ class NewsScraper:
                 logger.warning(f"{name}: API вернул пустой список")
                 return []
 
-            # КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: берём только ТОП-3
             items = items[:3]
-            logger.info(f"{name}: Берём топ-3 из {len(data) if isinstance(data, list) else len(data.get('content', []))}")
+            logger.info(f"{name}: Берём топ-3")
 
             for item in items:
                 if not isinstance(item, dict):
@@ -369,26 +365,49 @@ class NewsScraper:
 
                 link = f"{base_url}/memleket/entities/{project}/press/news/details/{slug}?lang=ru"
 
-                # ВАЖНО: НЕ парсим full_text, image, date
-                # Возвращаем только базовую информацию
+                # === КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: ДОСТАЕМ ТЕКСТ ИЗ JSON ===
+                # В gov.kz текст обычно лежит в 'body' в формате HTML
+                raw_body = item.get("body", "") or item.get("content", "") or ""
+                
+                # Очищаем от HTML тегов
+                soup = BeautifulSoup(raw_body, "html.parser")
+                clean_text = soup.get_text(separator="\n").strip()
+
+                # Добываем картинку (если есть в API)
+                image_url = None
+                images = item.get("images", [])
+                if isinstance(images, list) and images:
+                    img_path = images[0].get("url") or images[0].get("file", {}).get("url")
+                    if img_path:
+                        image_url = f"https://www.gov.kz{img_path}" if img_path.startswith("/") else img_path
+
+                # Дата из API (формат ISO)
+                pub_date = None
+                date_str = item.get("created_date") or item.get("published_at")
+                if date_str:
+                    try:
+                        # Убираем миллисекунды Z и парсим
+                        clean_date_str = date_str.split(".")[0].replace("Z", "")
+                        pub_date = datetime.strptime(clean_date_str, "%Y-%m-%dT%H:%M:%S")
+                    except Exception:
+                        pass
+
                 news.append({
                     "title": title,
                     "source_name": name,
                     "source_url": link,
-                    # Эти поля будут заполнены позже через enrich_news_with_content()
-                    "original_text": None,
-                    "image_url": None,
-                    "published_at": None,
+                    "original_text": clean_text if len(clean_text) > 50 else title, # Если текст слишком короткий, страхуемся
+                    "image_url": image_url,
+                    "published_at": pub_date,
                 })
 
-            logger.info(f"✅ {name}: собрано {len(news)} новостей (топ-3)")
+            logger.info(f"✅ {name}: собрано {len(news)} новостей с ТЕКСТОМ")
 
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Ошибка сети API {name}: {e}")
         except Exception as e:
-            logger.error(f"Ошибка API {name}: {e}", exc_info=True)
+            logger.error(f"Ошибка API {name}: {e}")
 
-        return news
+        return news      
+       
 
     # ========== НОВАЯ ФУНКЦИЯ: ОБОГАЩЕНИЕ ДАННЫМИ ==========
     def enrich_news_with_content(self, news_item: Dict) -> Dict:
