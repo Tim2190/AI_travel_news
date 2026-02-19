@@ -68,7 +68,7 @@ async def scrape_news_task():
     db = SessionLocal()
     try:
         logger.info("🚀 Starting scraping cycle (Async Mode)...")
-        # 1. Получаем «легкий» список
+        # 1. Получаем список с текстом
         raw_items = await scraper.scrape_async() 
         if not raw_items:
             logger.warning("No news found from direct sources.")
@@ -80,14 +80,12 @@ async def scrape_news_task():
         
         added = 0
         cutoff = datetime.utcnow() - timedelta(days=settings.NEWS_MAX_AGE_DAYS)
-        
-        # --- ФИЛЬТР КЛЮЧЕВЫХ СЛОВ УБРАН ---
 
         for item in raw_items:
             if added >= 10: break 
 
-            title = item["title"]
-            url = item["source_url"]
+            title = item.get("title", "")
+            url = item.get("source_url", "")
 
             # 3. БЫСТРЫЙ ФИЛЬТР: Проверка в БД по URL и заголовку
             if db.query(NewsArchive).filter(NewsArchive.source_url == url).first():
@@ -95,11 +93,8 @@ async def scrape_news_task():
             if is_fuzzy_duplicate(title, recent_titles):
                 continue
 
-            # 4. ФИЛЬТР ПО ТЕМЕ - ОТКЛЮЧЕН (ВСЕ НОВОСТИ ПРОХОДЯТ)
-            # Раньше здесь был блок if topic_keywords... теперь его нет.
-
-            # 5. ФИЛЬТР ПО ДАТЕ
-            pub = enriched_item.get("published_at")
+            # 5. ФИЛЬТР ПО ДАТЕ (ИСПРАВЛЕНО НА item)
+            pub = item.get("published_at")
             if not pub: 
                 pub = datetime.utcnow() 
             
@@ -110,14 +105,18 @@ async def scrape_news_task():
                 logger.info(f"⏭ Skip: Too old ({pub.strftime('%Y-%m-%d')})")
                 continue
 
-            # 6. СОХРАНЕНИЕ В БД
+            # 6. СОХРАНЕНИЕ В БД (ИСПРАВЛЕНО НА item)
+            original_content = item.get("original_text")
+            if not original_content or len(original_content) < 50:
+                 original_content = title # Страховка, если текст всё же пустой
+
             db.add(NewsArchive(
-                title=enriched_item["title"],
-                original_text=enriched_item.get("original_text") or enriched_item["title"],
-                source_name=enriched_item["source_name"],
-                source_url=enriched_item["source_url"],
+                title=title,
+                original_text=original_content,
+                source_name=item.get("source_name"),
+                source_url=url,
                 source_published_at=pub,
-                image_url=enriched_item.get("image_url"),
+                image_url=item.get("image_url"),
                 status=NewsStatus.draft.value
             ))
             added += 1
@@ -129,7 +128,7 @@ async def scrape_news_task():
     except Exception as e:
         logger.error(f"Scrape Error: {e}", exc_info=True)
     finally:
-        db.close()
+        db.close()        
 
 async def process_news_task():
     """Публикация: Режим работы 07-21, Чередование 2 RU / 1 KZ."""
