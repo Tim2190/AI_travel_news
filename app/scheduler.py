@@ -95,14 +95,10 @@ async def scrape_news_task():
             if is_fuzzy_duplicate(title, recent_titles):
                 continue
 
-            # 4. ОБОГАЩЕНИЕ: Идем на страницу за текстом и датой
-            logger.info(f"🔎 Enriching: {title[:50]}...")
-            enriched_item = await asyncio.to_thread(scraper.enrich_news_with_content, item)
-
-            # 5. ФИЛЬТР ПО ТЕМЕ - ОТКЛЮЧЕН (ВСЕ НОВОСТИ ПРОХОДЯТ)
+            # 4. ФИЛЬТР ПО ТЕМЕ - ОТКЛЮЧЕН (ВСЕ НОВОСТИ ПРОХОДЯТ)
             # Раньше здесь был блок if topic_keywords... теперь его нет.
 
-            # 6. ФИЛЬТР ПО ДАТЕ
+            # 5. ФИЛЬТР ПО ДАТЕ
             pub = enriched_item.get("published_at")
             if not pub: 
                 pub = datetime.utcnow() 
@@ -114,7 +110,7 @@ async def scrape_news_task():
                 logger.info(f"⏭ Skip: Too old ({pub.strftime('%Y-%m-%d')})")
                 continue
 
-            # 7. СОХРАНЕНИЕ В БД
+            # 6. СОХРАНЕНИЕ В БД
             db.add(NewsArchive(
                 title=enriched_item["title"],
                 original_text=enriched_item.get("original_text") or enriched_item["title"],
