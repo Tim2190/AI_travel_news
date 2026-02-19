@@ -7,7 +7,7 @@ from difflib import SequenceMatcher
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 import requests
-import pytz # Для работы с часовым поясом Астаны
+import pytz 
 
 from .database import SessionLocal, NewsArchive, NewsStatus
 from .scraper import scraper
@@ -19,8 +19,8 @@ logger = logging.getLogger(__name__)
 
 # --- НАСТРОЙКИ ---
 TIMEZONE = pytz.timezone('Asia/Almaty')
-WORK_START = time(7, 0)  # 07:00 утра
-WORK_END = time(21, 0)   # 21:00 вечера
+WORK_START = time(7, 0)  
+WORK_END = time(21, 0)   
 
 # --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 
@@ -43,22 +43,18 @@ def is_text_kazakh(text: str) -> bool:
 
 def is_post_integrity_ok(final_text: str, source_url: str) -> bool:
     """КОНТРОЛЕР: Проверка поста перед публикацией."""
-    # 1. Проверка на пустоту и длину
     if not final_text or len(final_text) < 100:
         logger.error("❌ Integrity Check: Текст слишком короткий.")
         return False
         
-    # 2. Проверка наличия ссылки на источник в тексте
     if "Түпнұсқа" not in final_text and "Источник" not in final_text:
         logger.error("❌ Integrity Check: Ссылка на источник не найдена в тексте.")
         return False
         
-    # 3. Проверка структуры (заголовок)
     if "<b>" not in final_text:
         logger.error("❌ Integrity Check: Нет заголовка (тег <b>).")
         return False
 
-    # 4. Проверка самого URL
     if not source_url or "http" not in source_url:
         logger.error("❌ Integrity Check: Битый URL источника.")
         return False
@@ -72,7 +68,7 @@ async def scrape_news_task():
     db = SessionLocal()
     try:
         logger.info("🚀 Starting scraping cycle (Async Mode)...")
-        # 1. Получаем «легкий» список (только заголовки и ссылки)
+        # 1. Получаем «легкий» список
         raw_items = await scraper.scrape_async() 
         if not raw_items:
             logger.warning("No news found from direct sources.")
@@ -84,10 +80,11 @@ async def scrape_news_task():
         
         added = 0
         cutoff = datetime.utcnow() - timedelta(days=settings.NEWS_MAX_AGE_DAYS)
-        topic_keywords = [k.strip().lower() for k in settings.TOPIC_KEYWORDS.split(",") if k.strip()]
+        
+        # --- ФИЛЬТР КЛЮЧЕВЫХ СЛОВ УБРАН ---
 
         for item in raw_items:
-            if added >= 10: break # Лимит на один цикл, чтобы не перегружать ИИ
+            if added >= 10: break 
 
             title = item["title"]
             url = item["source_url"]
@@ -98,22 +95,17 @@ async def scrape_news_task():
             if is_fuzzy_duplicate(title, recent_titles):
                 continue
 
-            # 4. ОБОГАЩЕНИЕ: Идем на страницу за текстом и датой (только для новых!)
-            # Используем asyncio.to_thread, чтобы синхронный requests не вешал бота
+            # 4. ОБОГАЩЕНИЕ: Идем на страницу за текстом и датой
             logger.info(f"🔎 Enriching: {title[:50]}...")
             enriched_item = await asyncio.to_thread(scraper.enrich_news_with_content, item)
 
-            # 5. ФИЛЬТР ПО ТЕМЕ (теперь по полному тексту)
-            if topic_keywords:
-                text_blob = (f"{enriched_item['title']} {enriched_item.get('original_text', '')}").lower()
-                if not any(kw in text_blob for kw in topic_keywords):
-                    logger.info(f"⏭ Skip: Not in topic keywords.")
-                    continue
+            # 5. ФИЛЬТР ПО ТЕМЕ - ОТКЛЮЧЕН (ВСЕ НОВОСТИ ПРОХОДЯТ)
+            # Раньше здесь был блок if topic_keywords... теперь его нет.
 
-            # 6. ФИЛЬТР ПО ДАТЕ (теперь дата есть!)
+            # 6. ФИЛЬТР ПО ДАТЕ
             pub = enriched_item.get("published_at")
             if not pub: 
-                pub = datetime.utcnow() # Фолбэк на сейчас, если в тексте нет даты
+                pub = datetime.utcnow() 
             
             if getattr(pub, "tzinfo", None):
                 pub = pub.replace(tzinfo=None)
@@ -134,7 +126,7 @@ async def scrape_news_task():
             ))
             added += 1
             recent_titles.append(title)
-            db.commit() # Коммитим по одной, чтобы если что-то упадет, остальное выжило
+            db.commit()
 
         logger.info(f"✅ Cycle finished. Added {added} new drafts.")
         
@@ -157,36 +149,30 @@ async def process_news_task():
         logger.info("Starting processing cycle...")
 
         # 2. Определение очереди (2 RU -> 1 KZ)
-        # Берем последние 3 опубликованные новости
         last_posts = db.query(NewsArchive).filter(
             NewsArchive.status == NewsStatus.published.value
         ).order_by(NewsArchive.published_at.desc()).limit(3).all()
 
-        target_lang = "RU" # По умолчанию
+        target_lang = "RU" 
         
         if last_posts:
-            # Логика чередования:
-            # Если последняя была KZ -> Сейчас RU
-            # Если последняя была RU, и предпоследняя RU -> Сейчас KZ
-            p1 = last_posts[0] # Самая свежая
-            
+            p1 = last_posts[0] 
             p1_is_kz = is_text_kazakh(p1.rewritten_text or p1.title)
             
             if p1_is_kz:
                 target_lang = "RU"
                 logger.info("Rotation: Last was KZ -> Next RU")
             else:
-                # Последняя была RU. Смотрим предпоследнюю.
                 if len(last_posts) >= 2:
                     p2 = last_posts[1]
                     p2_is_kz = is_text_kazakh(p2.rewritten_text or p2.title)
-                    if not p2_is_kz: # И предпоследняя тоже не KZ (значит было 2 RU подряд)
+                    if not p2_is_kz: 
                         target_lang = "KZ"
                         logger.info("Rotation: Last 2 were RU -> Next KZ")
                     else:
-                        target_lang = "RU" # Было RU, KZ -> Значит еще одно RU
+                        target_lang = "RU" 
                 else:
-                    target_lang = "RU" # Мало данных, пока гоним RU
+                    target_lang = "RU"
 
         # 3. Поиск подходящего черновика
         drafts = db.query(NewsArchive).filter(NewsArchive.status == NewsStatus.draft.value).all()
@@ -195,7 +181,6 @@ async def process_news_task():
             return
 
         selected = None
-        # Ищем строгое совпадение языка
         for d in drafts:
             draft_is_kz = is_text_kazakh(d.original_text)
             if target_lang == "KZ" and draft_is_kz:
@@ -205,7 +190,6 @@ async def process_news_task():
                 selected = d
                 break
         
-        # Fallback: Если нужного языка нет, берем что есть (чтобы не стоять)
         if not selected:
             selected = drafts[0]
             logger.info(f"Fallback: No {target_lang} drafts. Taking available.")
@@ -215,7 +199,6 @@ async def process_news_task():
             selected = db.merge(selected)
             logger.info(f"Processing: {selected.title}...")
 
-            # Рерайт через Gemini Ensemble
             rewritten = await rewriter.rewrite(selected.original_text)
             
             if not rewritten:
@@ -223,20 +206,17 @@ async def process_news_task():
                 db.commit()
                 return
 
-            # Сборка
             safe_url = html.escape(selected.source_url, quote=True)
             disclaimer = "\n\n<i>⚠️ Сообщение создано ИИ. Проверяйте информацию по ссылке ниже.</i>"
             source_link = f"\n<a href=\"{safe_url}\">🌐 Түпнұсқа / Источник</a>"
             final_text = f"{rewritten}{disclaimer}{source_link}"
 
-            # Контроль целостности
             if not is_post_integrity_ok(final_text, selected.source_url):
                 logger.warning(f"⚠️ Rejected by Integrity Check: {selected.id}")
                 selected.status = NewsStatus.error.value
                 db.commit()
                 return
 
-            # Публикация
             post_id = await publisher.publish(final_text, selected.image_url)
             
             if post_id:
