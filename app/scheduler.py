@@ -111,7 +111,7 @@ async def scrape_news_task():
                  original_content = title # Страховка, если текст всё же пустой
 
             db.add(NewsArchive(
-                title=title,
+                title=title[:490],
                 original_text=original_content,
                 source_name=item.get("source_name"),
                 source_url=url,
