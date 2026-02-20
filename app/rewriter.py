@@ -125,12 +125,28 @@ class GeminiRewriter:
 
     def _clean_output(self, text: str) -> str:
         if not text: return ""
+        
         # Исправляем Markdown жирный на HTML если модель ошиблась
         text = re.sub(r"\*\*(.*?)\*\*", r"<b>\1</b>", text)
+        
+        # Отрезаем всё, что до первого <b> (чтобы убрать лишние вступления ИИ)
         if "<b>" in text:
             text = text[text.find("<b>"):]
+            
+        # Жесткая обрезка по лимиту
         if len(text) > MAX_TG_CAPTION_LEN:
             text = text[:MAX_TG_CAPTION_LEN-3] + "..."
+            
+        # --- СПАСАТЕЛЬНЫЙ КРУГ ДЛЯ TELEGRAM ---
+        # Проверяем базовые теги: если открыли, но при обрезке потеряли закрывающий — добавляем его.
+        for tag in ['b', 'i', 'u', 's', 'code']:
+            open_tags = text.count(f"<{tag}>")
+            close_tags = text.count(f"</{tag}>")
+            
+            # Если открывающих больше, добавляем закрывающие в конец
+            if open_tags > close_tags:
+                text += f"</{tag}>" * (open_tags - close_tags)
+
         return text.strip()
 
 rewriter = GeminiRewriter()
