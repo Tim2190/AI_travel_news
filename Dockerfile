@@ -8,8 +8,9 @@ COPY . .
 # Устанавливаем зависимости
 RUN pip install --no-cache-dir -r requirements.txt
 
-# На всякий случай убеждаемся, что браузеры точно стоят (для новой версии)
+# Устанавливаем браузеры
 RUN playwright install chromium
 RUN playwright install-deps
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# ВАЖНО: Убрали скобки, чтобы Render подставил свой порт
+CMD uvicorn app.main:app --host 0.0.0.0 --port $PORT
