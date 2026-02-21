@@ -129,7 +129,15 @@ class GeminiRewriter:
         # Исправляем Markdown жирный на HTML если модель ошиблась
         text = re.sub(r"\*\*(.*?)\*\*", r"<b>\1</b>", text)
         
-        # Отрезаем всё, что до первого <b> (чтобы убрать лишние вступления ИИ)
+        # --- НОВЫЙ БЛОК: АВТО-ЗАГОЛОВОК ---
+        # Если ИИ вообще забыл выделить заголовок, берем первую непустую строку и делаем её жирной
+        if "<b>" not in text:
+            lines = [line for line in text.split('\n') if line.strip()]
+            if lines:
+                lines[0] = f"<b>{lines[0].strip()}</b>"
+                text = '\n'.join(lines)
+
+        # Отрезаем всё, что до первого <b> (чтобы убрать лишние вступления ИИ типа "Вот ваш перевод:")
         if "<b>" in text:
             text = text[text.find("<b>"):]
             
@@ -148,5 +156,5 @@ class GeminiRewriter:
                 text += f"</{tag}>" * (open_tags - close_tags)
 
         return text.strip()
-
+        
 rewriter = GeminiRewriter()
